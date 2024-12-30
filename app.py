@@ -26,6 +26,14 @@ def fetch_player_data():
     response = requests.get(url)
     return response.json() if response.status_code == 200 else None
 
+def fetch_teams():
+    url = "https://fantasy.premierleague.com/api/bootstrap-static/"
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json()
+        return {team["id"]: team["name"] for team in data["teams"]}
+    return {}
+
 def fetch_gameweek_picks(user_id, gameweek):
     url = f"https://fantasy.premierleague.com/api/entry/{user_id}/event/{gameweek}/picks/"
     response = requests.get(url)
@@ -63,12 +71,13 @@ def player_stats(player_id):
     if not data:
         return jsonify({"error": "Failed to fetch player data"}), 500
     players = {p["id"]: p for p in data["elements"]}
+    teams = fetch_teams()  # Fetch the team ID-to-name mapping
     player = players.get(player_id)
     if player:
         return jsonify({
             "name": f"{player['first_name']} {player['second_name']}",
             "photo": f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{player['code']}.png",
-            "team": player["team"],
+            "team": teams.get(player["team"], "Unknown"),  # Translate team ID to name
             "position": POSITION_MAP[player["element_type"]],
             "price": player["now_cost"] / 10,
             "total_points": player["total_points"],
