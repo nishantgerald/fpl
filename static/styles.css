@@ -156,89 +156,130 @@ h2 {
 }
 
 .modal-content {
-    background: linear-gradient(135deg, #3a7bd5, #3a6073); /* FPL-style gradient */
-    color: white;
-    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center; /* Center-align all content horizontally */
+    padding: 30px; /* Increase padding for more spacing */
     border-radius: 15px;
-    max-width: 500px;
+    max-width: 600px; /* Slightly wider modal */
     margin: 50px auto;
-    position: relative;
+    background: linear-gradient(135deg, #3a7bd5, #3a6073);
+    color: white;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    position: relative; /* Anchor close button to this element */
 }
 
 .close-button {
-    position: absolute;
-    top: 10px;
-    right: 10px;
+    position: absolute; /* Relative to modal-content */
+    top: 15px; /* Add more spacing from the top */
+    right: 15px; /* Add more spacing from the right */
     background: none;
     border: none;
     color: white;
-    font-size: 1.5rem;
+    font-size: 1.8rem; /* Increase font size for better visibility */
     cursor: pointer;
+    z-index: 1000; /* Ensure it stays above other elements */
 }
 
 .player-header {
+    position: relative; /* Anchor position box to the header */
     display: flex;
     align-items: center;
-    gap: 15px;
-    margin-bottom: 20px;
+    flex-direction: column; /* Ensure vertical alignment */
+    margin-bottom: 30px; /* Add more space below header */
+    padding-top: 30px; /* Add padding above for the position box */
 }
 
 .player-image {
-    width: 80px;
-    height: 80px;
+    width: 140px; /* Slightly larger image */
+    height: 140px;
     border-radius: 50%;
-    border: 2px solid white;
+    border: 3px solid white;
+    margin-bottom: 20px; /* Add more spacing below the image */
     object-fit: cover;
+    display: block;
 }
 
 .player-details {
     display: flex;
     flex-direction: column;
     justify-content: center;
-}
-
-.player-position {
-    font-size: 1rem;
-    font-weight: bold;
-    background: #6b2e82; /* Purple badge for position */
-    padding: 5px 10px;
-    border-radius: 5px;
-    margin-bottom: 5px;
-    color: white;
+    margin-bottom: 20px; /* Add space below player details */
 }
 
 .player-name {
-    font-size: 1.8rem;
+    font-size: 2rem; /* Slightly larger font for the name */
     margin: 0;
+    margin-bottom: 5px; /* Add space below the name */
 }
 
 .player-team {
-    font-size: 1.2rem;
+    font-size: 1.3rem; /* Increase font size for team */
     font-style: italic;
+    margin-top: 5px; /* Add space above the team */
+}
+
+.player-stats .stat {
+    display: flex;
+    flex-direction: column; /* Stack label and value vertically */
+    align-items: center; /* Center-align both */
+    background: rgba(255, 255, 255, 0.1); /* Slightly transparent background */
+    padding: 15px 20px;
+    border-radius: 10px;
+    text-align: center; /* Center-align text */
 }
 
 .player-stats {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: 15px;
-    margin-top: 20px;
-}
-
-.stat {
-    background: rgba(255, 255, 255, 0.1); /* Semi-transparent stat box */
-    padding: 10px;
-    border-radius: 10px;
-    text-align: center;
+    gap: 20px; /* Increase spacing between stat boxes */
+    margin-top: 30px; /* Add spacing above the stats */
 }
 
 .stat-label {
-    font-size: 0.9rem;
+    font-size: 1rem;
     font-weight: bold;
+    color: #ddd; /* Light gray */
     text-transform: uppercase;
+    margin-bottom: 5px; /* Add space below the label */
 }
 
 .stat-value {
-    font-size: 1.4rem;
-    margin-top: 5px;
+    font-size: 1.4rem; /* Increase size slightly for emphasis */
+    font-weight: 700;
+    color: white; /* White for contrast */
+}
+
+.player-position {
+    font-size: 0.9rem;
+    font-weight: bold;
+    padding: 5px;
+    width: 80px; /* Fixed width */
+    height: 30px; /* Fixed height */
+    border-radius: 5px;
+    color: white;
+    display: inline-block;
+    text-align: center;
+    line-height: 30px; /* Center text vertically */
+    position: absolute; /* Fix its position */
+    top: -20px; /* Adjust to be above the image */
+    left: 50%; /* Center horizontally */
+    transform: translateX(-50%); /* Offset by 50% of its width for centering */
+    z-index: 10; /* Ensure it stays above the image */
+}
+
+.player-position.gkp {
+    background: #1e90ff; /* Blue for Goalkeeper */
+}
+
+.player-position.def {
+    background: #228b22; /* Green for Defender */
+}
+
+.player-position.mid {
+    background: #9400d3; /* Purple for Midfielder */
+}
+
+.player-position.fwd {
+    background: #ff4500; /* Orange for Forward */
 }
