@@ -1,0 +1,244 @@
+/* Center the FPL App Title */
+
+.app-header {
+    background: linear-gradient(135deg, #3a7bd5, #3a6073); /* Gradient background */
+    color: white;
+    padding: 20px;
+    text-align: center;
+    font-family: 'Arial', sans-serif; /* Clean and modern font */
+    border-radius: 10px; /* Rounded corners */
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2); /* Add a slight shadow */
+    margin-bottom: 20px; /* Space below the header */
+}
+
+.app-header h1 {
+    font-size: 2.5rem;
+    margin: 0;
+    font-weight: bold;
+}
+
+h1 {
+    text-align: center;
+    font-size: 2rem;
+    margin-bottom: 20px;
+}
+
+/* Center the Bench Header */
+h2 {
+    text-align: center;
+    font-size: 1.5rem;
+    margin-top: 30px;
+    margin-bottom: 10px;
+}
+
+.tabs {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 20px;
+}
+
+.tab-button {
+    background: #3498db;
+    color: #fff;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    margin: 0 5px;
+}
+
+.tab-button.active {
+    background: #1d6fa5;
+}
+
+.field {
+    background: #10a223;
+    padding: 20px;
+    border-radius: 10px;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.row {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.player {
+    position: relative;
+    width: 100px;
+    text-align: center;
+    background: #fff;
+    border-radius: 10px;
+    padding: 10px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.player img {
+    width: 100%;
+    height: auto;
+    border-radius: 10px;
+}
+
+.player .badge {
+    position: absolute;
+    top: 5px; /* Position at the top */
+    left: 5px; /* Align to the left */
+    background-color: #f1c40f; /* Gold for Captain */
+    color: #000000;
+    font-size: 10px;
+    font-weight: bold;
+    padding: 2px 5px;
+    border-radius: 3px;
+    text-align: center;
+}
+
+.player .vc-badge {
+    position: absolute;
+    top: 5px; /* Position at the top */
+    left: 5px; /* Align to the left */
+    background-color: #ffafbc; /* Blue for Vice Captain */
+    color: #000000;
+    font-size: 10px;
+    font-weight: bold;
+    padding: 2px 5px;
+    border-radius: 3px;
+    text-align: center;
+}
+
+.info-button {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background: #3498db;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    font-size: 14px;
+    line-height: 20px;
+    text-align: center;
+    cursor: pointer;
+}
+
+.bench {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.bench-container {
+    background: #0a7a16; /* Dark green background */
+    padding: 20px;
+    border-radius: 10px;
+    max-width: 800px;
+    margin: 20px auto; /* Center the container horizontally */
+}
+
+.bench-container h2 {
+    text-align: center;
+    font-size: 1.5rem;
+    margin-top: 10px; /* Reduce padding above the title */
+    margin-bottom: 10px; /* Optional: Adjust padding below the title */
+}
+
+.modal-image {
+    display: block;
+    margin: 0 auto 20px; /* Center the image and add spacing below */
+    width: 100px;
+    height: 100px;
+    border-radius: 50%; /* Make the image circular */
+    object-fit: cover;
+}
+
+.modal-content {
+    background: linear-gradient(135deg, #3a7bd5, #3a6073); /* FPL-style gradient */
+    color: white;
+    padding: 20px;
+    border-radius: 15px;
+    max-width: 500px;
+    margin: 50px auto;
+    position: relative;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+
+.close-button {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: none;
+    border: none;
+    color: white;
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+.player-header {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.player-image {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    border: 2px solid white;
+    object-fit: cover;
+}
+
+.player-details {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.player-position {
+    font-size: 1rem;
+    font-weight: bold;
+    background: #6b2e82; /* Purple badge for position */
+    padding: 5px 10px;
+    border-radius: 5px;
+    margin-bottom: 5px;
+    color: white;
+}
+
+.player-name {
+    font-size: 1.8rem;
+    margin: 0;
+}
+
+.player-team {
+    font-size: 1.2rem;
+    font-style: italic;
+}
+
+.player-stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+    margin-top: 20px;
+}
+
+.stat {
+    background: rgba(255, 255, 255, 0.1); /* Semi-transparent stat box */
+    padding: 10px;
+    border-radius: 10px;
+    text-align: center;
+}
+
+.stat-label {
+    font-size: 0.9rem;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.stat-value {
+    font-size: 1.4rem;
+    margin-top: 5px;
+}
