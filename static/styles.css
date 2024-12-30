@@ -1,5 +1,4 @@
 /* Center the FPL App Title */
-
 .app-header {
     background: linear-gradient(135deg, #3a7bd5, #3a6073); /* Gradient background */
     color: white;
@@ -15,12 +14,6 @@
     font-size: 2.5rem;
     margin: 0;
     font-weight: bold;
-}
-
-h1 {
-    text-align: center;
-    font-size: 2rem;
-    margin-bottom: 20px;
 }
 
 /* Center the Bench Header */
@@ -51,6 +44,73 @@ h2 {
     background: #1d6fa5;
 }
 
+/* User ID Search Section */
+.user-id-search {
+    margin: 20px auto;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 10px;
+    box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
+    max-width: 400px;
+    text-align: center;
+}
+
+.search-form {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.search-label {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #343a40;
+}
+
+.search-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+}
+
+.search-input {
+    flex: 1;
+    padding: 10px 15px;
+    font-size: 1rem;
+    border: 2px solid #ced4da;
+    border-radius: 5px;
+    outline: none;
+    transition: border-color 0.3s ease;
+}
+
+.search-input:focus {
+    border-color: #007bff;
+    box-shadow: 0px 0px 4px #007bff;
+}
+
+.search-button {
+    padding: 10px 20px;
+    font-size: 1rem;
+    font-weight: bold;
+    color: white;
+    background-color: #007bff;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.search-button:hover {
+    background-color: #0056b3;
+}
+
+.search-button:active {
+    background-color: #003f7f;
+}
+
+/* Formation Field */
 .field {
     background: #10a223;
     padding: 20px;
@@ -84,8 +144,8 @@ h2 {
 
 .player .badge {
     position: absolute;
-    top: 5px; /* Position at the top */
-    left: 5px; /* Align to the left */
+    top: 5px;
+    left: 5px;
     background-color: #f1c40f; /* Gold for Captain */
     color: #000000;
     font-size: 10px;
@@ -97,8 +157,8 @@ h2 {
 
 .player .vc-badge {
     position: absolute;
-    top: 5px; /* Position at the top */
-    left: 5px; /* Align to the left */
+    top: 5px;
+    left: 5px;
     background-color: #ffafbc; /* Blue for Vice Captain */
     color: #000000;
     font-size: 10px;
@@ -124,6 +184,7 @@ h2 {
     cursor: pointer;
 }
 
+/* Bench Section */
 .bench {
     display: flex;
     justify-content: center;
@@ -146,6 +207,7 @@ h2 {
     margin-bottom: 10px; /* Optional: Adjust padding below the title */
 }
 
+/* Modal Styling */
 .modal-image {
     display: block;
     margin: 0 auto 20px; /* Center the image and add spacing below */
@@ -170,102 +232,103 @@ h2 {
 }
 
 .close-button {
-    position: absolute; /* Relative to modal-content */
-    top: 15px; /* Add more spacing from the top */
-    right: 15px; /* Add more spacing from the right */
+    position: absolute;
+    top: 15px;
+    right: 15px;
     background: none;
     border: none;
     color: white;
     font-size: 1.8rem; /* Increase font size for better visibility */
     cursor: pointer;
-    z-index: 1000; /* Ensure it stays above other elements */
+    z-index: 1000;
 }
 
+/* Player Header in Modal */
 .player-header {
-    position: relative; /* Anchor position box to the header */
+    position: relative;
     display: flex;
     align-items: center;
-    flex-direction: column; /* Ensure vertical alignment */
-    margin-bottom: 30px; /* Add more space below header */
-    padding-top: 30px; /* Add padding above for the position box */
+    flex-direction: column;
+    margin-bottom: 30px;
+    padding-top: 30px;
 }
 
 .player-image {
-    width: 140px; /* Slightly larger image */
+    width: 140px;
     height: 140px;
     border-radius: 50%;
     border: 3px solid white;
-    margin-bottom: 20px; /* Add more spacing below the image */
+    margin-bottom: 20px;
     object-fit: cover;
-    display: block;
 }
 
 .player-details {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    margin-bottom: 20px; /* Add space below player details */
+    margin-bottom: 20px;
 }
 
 .player-name {
-    font-size: 2rem; /* Slightly larger font for the name */
+    font-size: 2rem;
     margin: 0;
-    margin-bottom: 5px; /* Add space below the name */
+    margin-bottom: 5px;
 }
 
 .player-team {
-    font-size: 1.3rem; /* Increase font size for team */
+    font-size: 1.3rem;
     font-style: italic;
-    margin-top: 5px; /* Add space above the team */
+    margin-top: 5px;
+}
+
+/* Player Stats */
+.player-stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    margin-top: 30px;
 }
 
 .player-stats .stat {
     display: flex;
     flex-direction: column; /* Stack label and value vertically */
-    align-items: center; /* Center-align both */
-    background: rgba(255, 255, 255, 0.1); /* Slightly transparent background */
+    align-items: center;
+    background: rgba(255, 255, 255, 0.1);
     padding: 15px 20px;
     border-radius: 10px;
-    text-align: center; /* Center-align text */
-}
-
-.player-stats {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 20px; /* Increase spacing between stat boxes */
-    margin-top: 30px; /* Add spacing above the stats */
+    text-align: center;
 }
 
 .stat-label {
     font-size: 1rem;
     font-weight: bold;
-    color: #ddd; /* Light gray */
-    text-transform: uppercase;
-    margin-bottom: 5px; /* Add space below the label */
+    color: #ddd;
+    margin-bottom: 5px;
 }
 
 .stat-value {
-    font-size: 1.4rem; /* Increase size slightly for emphasis */
+    font-size: 1.4rem;
     font-weight: 700;
-    color: white; /* White for contrast */
+    color: white;
 }
 
+/* Position Colors */
 .player-position {
     font-size: 0.9rem;
     font-weight: bold;
     padding: 5px;
-    width: 80px; /* Fixed width */
-    height: 30px; /* Fixed height */
+    width: 80px;
+    height: 30px;
     border-radius: 5px;
     color: white;
     display: inline-block;
     text-align: center;
-    line-height: 30px; /* Center text vertically */
-    position: absolute; /* Fix its position */
-    top: -20px; /* Adjust to be above the image */
-    left: 50%; /* Center horizontally */
-    transform: translateX(-50%); /* Offset by 50% of its width for centering */
-    z-index: 10; /* Ensure it stays above the image */
+    line-height: 30px;
+    position: absolute;
+    top: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
 }
 
 .player-position.gkp {
