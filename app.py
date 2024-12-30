@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 import requests
 
 app = Flask(__name__)
@@ -89,7 +89,7 @@ def player_stats(player_id):
 
 @app.route("/")
 def home():
-    USER_ID = 3022850
+    user_id = request.args.get("user_id", default=3022850, type=int)  # Default USER_ID
     gameweek = fetch_current_gameweek()
     if not gameweek:
         return "Failed to fetch current gameweek."
@@ -97,11 +97,16 @@ def home():
     if not data:
         return "Failed to fetch player data."
     players = {p["id"]: p for p in data["elements"]}
-    picks = fetch_gameweek_picks(USER_ID, gameweek)
+    picks = fetch_gameweek_picks(user_id, gameweek)
     if not picks:
         return "Failed to fetch gameweek picks."
     lineup, bench = organize_team(picks["picks"], players)
-    return render_template("formation_with_bench.html", starting_lineup=lineup, bench=bench)
+    return render_template(
+        "formation_with_bench.html", 
+        starting_lineup=lineup, 
+        bench=bench, 
+        user_id=user_id
+    )
 
 if __name__ == "__main__":
     app.run(debug=True)
