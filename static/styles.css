@@ -1,13 +1,18 @@
 /* Center the FPL App Title */
 .app-header {
-    background: linear-gradient(135deg, #3a7bd5, #3a6073); /* Gradient background */
+    background: linear-gradient(135deg, #3a7bd5, #3a6073);
+    /* Gradient background */
     color: white;
     padding: 20px;
     text-align: center;
-    font-family: 'Arial', sans-serif; /* Clean and modern font */
-    border-radius: 10px; /* Rounded corners */
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2); /* Add a slight shadow */
-    margin-bottom: 20px; /* Space below the header */
+    font-family: 'Arial', sans-serif;
+    /* Clean and modern font */
+    border-radius: 10px;
+    /* Rounded corners */
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    /* Add a slight shadow */
+    margin-bottom: 20px;
+    /* Space below the header */
 }
 
 .app-header h1 {
@@ -145,7 +150,8 @@ h2 {
 /* Injured, Suspended, or Unavailable Player */
 .player.injured {
     background: red;
-    color: white; /* Optional: Make text more readable */
+    color: white;
+    /* Optional: Make text more readable */
 }
 
 .player img {
@@ -158,7 +164,8 @@ h2 {
     position: absolute;
     top: 5px;
     left: 5px;
-    background-color: #f1c40f; /* Gold for Captain */
+    background-color: #f1c40f;
+    /* Gold for Captain */
     color: #000000;
     font-size: 10px;
     font-weight: bold;
@@ -171,7 +178,8 @@ h2 {
     position: absolute;
     top: 5px;
     left: 5px;
-    background-color: #ffafbc; /* Blue for Vice Captain */
+    background-color: #ffafbc;
+    /* Blue for Vice Captain */
     color: #000000;
     font-size: 10px;
     font-weight: bold;
@@ -205,42 +213,52 @@ h2 {
 }
 
 .bench-container {
-    background: #0a7a16; /* Dark green background */
+    background: #0a7a16;
+    /* Dark green background */
     padding: 20px;
     border-radius: 10px;
     max-width: 800px;
-    margin: 20px auto; /* Center the container horizontally */
+    margin: 20px auto;
+    /* Center the container horizontally */
 }
 
 .bench-container h2 {
     text-align: center;
     font-size: 1.5rem;
-    margin-top: 10px; /* Reduce padding above the title */
-    margin-bottom: 10px; /* Optional: Adjust padding below the title */
+    margin-top: 10px;
+    /* Reduce padding above the title */
+    margin-bottom: 10px;
+    /* Optional: Adjust padding below the title */
 }
 
 /* Modal Styling */
 .modal-image {
     display: block;
-    margin: 0 auto 20px; /* Center the image and add spacing below */
+    margin: 0 auto 20px;
+    /* Center the image and add spacing below */
     width: 100px;
     height: 100px;
-    border-radius: 50%; /* Make the image circular */
+    border-radius: 50%;
+    /* Make the image circular */
     object-fit: cover;
 }
 
 .modal-content {
     display: flex;
     flex-direction: column;
-    align-items: center; /* Center-align all content horizontally */
-    padding: 30px; /* Increase padding for more spacing */
+    align-items: center;
+    /* Center-align all content horizontally */
+    padding: 30px;
+    /* Increase padding for more spacing */
     border-radius: 15px;
-    max-width: 600px; /* Slightly wider modal */
+    max-width: 600px;
+    /* Slightly wider modal */
     margin: 50px auto;
     background: linear-gradient(135deg, #3a7bd5, #3a6073);
     color: white;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-    position: relative; /* Anchor close button to this element */
+    position: relative;
+    /* Anchor close button to this element */
 }
 
 .close-button {
@@ -250,7 +268,8 @@ h2 {
     background: none;
     border: none;
     color: white;
-    font-size: 1.8rem; /* Increase font size for better visibility */
+    font-size: 1.8rem;
+    /* Increase font size for better visibility */
     cursor: pointer;
     z-index: 1000;
 }
@@ -303,7 +322,8 @@ h2 {
 
 .player-stats .stat {
     display: flex;
-    flex-direction: column; /* Stack label and value vertically */
+    flex-direction: column;
+    /* Stack label and value vertically */
     align-items: center;
     background: rgba(255, 255, 255, 0.1);
     padding: 15px 20px;
@@ -344,17 +364,21 @@ h2 {
 }
 
 .player-position.gkp {
-    background: #1e90ff; /* Blue for Goalkeeper */
+    background: #1e90ff;
+    /* Blue for Goalkeeper */
 }
 
 .player-position.def {
-    background: #228b22; /* Green for Defender */
+    background: #228b22;
+    /* Green for Defender */
 }
 
 .player-position.mid {
-    background: #9400d3; /* Purple for Midfielder */
+    background: #9400d3;
+    /* Purple for Midfielder */
 }
 
 .player-position.fwd {
-    background: #ff4500; /* Orange for Forward */
+    background: #ff4500;
+    /* Orange for Forward */
 }

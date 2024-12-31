@@ -14,23 +14,16 @@
     </header>
 
     <!-- User ID Input Section -->
-<div class="user-id-search">
-    <form action="/" method="get" class="search-form">
-        <label for="user_id" class="search-label">Enter User ID:</label>
-        <div class="search-group">
-            <input 
-                type="number" 
-                id="user_id" 
-                name="user_id" 
-                value="{{ user_id }}" 
-                min="1" 
-                placeholder="3022850" 
-                class="search-input" 
-                required>
-            <button type="submit" class="search-button">Update Team</button>
-        </div>
-    </form>
-</div>
+    <div class="user-id-search">
+        <form action="/" method="get" class="search-form">
+            <label for="user_id" class="search-label">Enter User ID:</label>
+            <div class="search-group">
+                <input type="number" id="user_id" name="user_id" value="{{ user_id }}" min="1" placeholder="3022850"
+                    class="search-input" required>
+                <button type="submit" class="search-button">Update Team</button>
+            </div>
+        </form>
+    </div>
 
     <!-- Tabs -->
     <div class="tabs">
