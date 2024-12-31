@@ -51,6 +51,7 @@ def organize_team(picks, players):
     for pick in picks:
         element_id = pick["element"]
         player = players.get(element_id, {})
+        status = STATUS_MAP.get(player["status"], "Unknown")
         player_data = {
             "id": element_id,
             "name": f"{player.get('first_name', '')} {player.get('second_name', '')}",
@@ -58,6 +59,10 @@ def organize_team(picks, players):
             "position": POSITION_MAP[player["element_type"]],
             "is_captain": pick["is_captain"],
             "is_vice_captain": pick["is_vice_captain"],
+            "status": status,
+            "status_class": "doubtful" if status == "Doubtful" else (
+                "injured" if status in ["Injured", "Suspended", "Unavailable"] else "available"
+            ),
         }
         if pick["multiplier"] > 0:
             lineup[player_data["position"]].append(player_data)
