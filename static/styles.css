@@ -130,10 +130,22 @@ h2 {
     position: relative;
     width: 100px;
     text-align: center;
-    background: #fff;
+    background: white;
     border-radius: 10px;
     padding: 10px;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    margin: 10px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+/* Doubtful Player */
+.player.doubtful {
+    background: yellow;
+}
+
+/* Injured, Suspended, or Unavailable Player */
+.player.injured {
+    background: red;
+    color: white; /* Optional: Make text more readable */
 }
 
 .player img {

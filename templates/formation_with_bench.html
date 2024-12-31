@@ -42,7 +42,7 @@
         {% for position, players in starting_lineup.items() %}
         <div class="row">
             {% for player in players %}
-            <div class="player">
+            <div class="player {{ player.status_class }}">
                 <img src="{{ player.photo }}" alt="{{ player.name }}">
                 <span>{{ player.name }}</span>
                 <button class="info-button" onclick="showPlayerStats('{{ player.id }}')">i</button>
@@ -62,7 +62,7 @@
         <h2>Bench</h2>
         <div class="bench">
             {% for player in bench %}
-            <div class="player">
+            <div class="player {{ player.status_class }}">
                 <img src="{{ player.photo }}" alt="{{ player.name }}">
                 <span>{{ player.name }}</span>
                 <button class="info-button" onclick="showPlayerStats('{{ player.id }}')">i</button>
