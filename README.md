@@ -2,8 +2,6 @@
 
 A web application that dynamically fetches and displays your Fantasy Premier League (FPL) team lineup and bench for the current gameweek, with a visually appealing interface and player information modal.
 
----
-
 ## **Features**
 
 - **Dynamic Lineup Display**: Displays the starting lineup and bench for the current gameweek.
@@ -13,17 +11,8 @@ A web application that dynamically fetches and displays your Fantasy Premier Lea
 - **Responsive Design**: Works on both desktop and mobile browsers.
 - **Expandable**: Modular structure for easy feature additions or customizations.
 
----
 
 ## **Getting Started**
-
-### Prerequisites
-
-- **Python 3.8 or higher**
-- **Flask**: Install using `pip install flask`
-- **Requests**: Install using `pip install requests`
-
----
 
 ### Installation
 
@@ -49,8 +38,6 @@ A web application that dynamically fetches and displays your Fantasy Premier Lea
 5. **Open in Browser**
    - Visit [http://127.0.0.1:5000](http://127.0.0.1:5000) in your web browser.
 
----
-
 ## **Usage**
 
 1. **View Your Team**
@@ -64,8 +51,6 @@ A web application that dynamically fetches and displays your Fantasy Premier Lea
    - **Red**: Injured, Suspended, or Unavailable players.
    - **Yellow**: Doubtful players.
    - **White**: Available players.
-
----
 
 ## **Code Customization**
 
@@ -82,7 +67,6 @@ A web application that dynamically fetches and displays your Fantasy Premier Lea
 ### 4. **Add New Player Info**
 - Extend `/player-stats/<player_id>` in `app.py` to fetch and display additional player statistics.
 
----
 
 ## **Known Issues**
 
@@ -96,16 +80,12 @@ A web application that dynamically fetches and displays your Fantasy Premier Lea
 3. **Player Status Handling**:
    - If new status codes are introduced, update `STATUS_MAP` in `app.py`.
 
----
 
 ## **License**
 
 This project is licensed under the MIT License. See the `LICENSE` file for details.
 
----
 
 ## **Contact**
 
 For any issues or feature requests, feel free to create an issue in this repository.
-
----
