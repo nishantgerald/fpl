@@ -382,3 +382,72 @@ h2 {
     background: #ff4500;
     /* Orange for Forward */
 }
+
+/* General app header style */
+.app-header {
+    background-color: #1E90FF;
+    color: white;
+    padding: 10px;
+    text-align: center;
+}
+
+/* Button styles */
+.btn-primary {
+    background-color: #1E90FF;
+    color: white;
+    padding: 10px 20px;
+    text-decoration: none;
+    border-radius: 5px;
+    font-weight: bold;
+    display: inline-block;
+    text-align: center;
+}
+
+.btn-primary:hover {
+    background-color: #1C86EE;
+}
+
+/* Filter styles */
+.filters {
+    margin: 20px auto;
+    text-align: center;
+}
+
+.filters label {
+    margin-right: 10px;
+    font-weight: bold;
+}
+
+.filters select,
+.filters input {
+    margin: 0 10px;
+    padding: 5px;
+    border-radius: 5px;
+    border: 1px solid #ddd;
+}
+
+.filters input {
+    width: 80px;
+}
+
+/* Navigation bar */
+.navbar {
+    display: flex;
+    justify-content: flex-start;
+    padding: 10px 20px;
+    background-color: #ffffff;
+}
+
+.navbar a {
+    margin-right: 15px;
+    padding: 10px 15px;
+    text-decoration: none;
+    color: white;
+    background-color: #1E90FF;
+    border-radius: 5px;
+    font-weight: bold;
+}
+
+.navbar a:hover {
+    background-color: #1C86EE;
+}
