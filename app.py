@@ -111,6 +111,33 @@ def player_stats(player_id):
         )
     return jsonify({"error": "Player not found"}), 404
 
+@app.route("/players")
+def players_page():
+    return render_template("players.html")
+
+@app.route("/api/players")
+def players_data():
+    data = fetch_player_data()
+    if not data:
+        return jsonify({"error": "Failed to fetch player data"}), 500
+    players = data["elements"]
+    teams = fetch_teams()
+    player_list = [
+        {
+            "id": player["id"],
+            "name": f"{player['first_name']} {player['second_name']}",
+            "team": teams.get(player["team"], "Unknown"),
+            "position": POSITION_MAP[player["element_type"]],
+            "price": player["now_cost"] / 10,
+            "total_points": player["total_points"],
+            "form": player["form"],
+            "selected_by_percent": player["selected_by_percent"],
+            "status": STATUS_MAP.get(player["status"], "Unknown"),
+        }
+        for player in players
+    ]
+    return jsonify({"data": player_list})  # Add "data" key
+
 
 @app.route("/")
 def home():
@@ -135,5 +162,5 @@ def home():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Default to 5000 if $PORT is not set
+    port = int(os.environ.get("PORT", 5001))  # Default to 5001 if $PORT is not set
     app.run(host="0.0.0.0", port=port)
