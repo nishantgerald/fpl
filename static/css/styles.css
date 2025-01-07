@@ -140,6 +140,11 @@ h2 {
     border-radius: 10px;
     max-width: 800px;
     margin: 0 auto;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2) !important; /* Add a subtle shadow */
+    transition: box-shadow 0.3s ease, background-color 0.3s ease !important;
+    border-width: 2px;
+    border-style: solid;
+    border-color: #000000;
 }
 
 .row {
@@ -238,6 +243,11 @@ h2 {
     max-width: 800px;
     margin: 20px auto;
     /* Center the container horizontally */
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2) !important; /* Add a subtle shadow */
+    transition: box-shadow 0.3s ease, background-color 0.3s ease !important;
+    border-width: 2px;
+    border-style: solid;
+    border-color: #000000;
 }
 
 .bench-container h2 {
@@ -275,12 +285,13 @@ h2 {
     margin: 50px auto;
     background: linear-gradient(to right, #01fc7a, #01fc7a);
     color: rgb(0, 0, 0);
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
     position: relative;
     /* Anchor close button to this element */
-    border-width: 3px;
+    box-shadow: 0px 20px 20px 12px rgba(0, 0, 0, 0.2) !important;
+    transition: box-shadow 0.3s ease, background-color 0.3s ease !important;
+    border-width: 2px;
     border-style: solid;
-    border-color: #313f8a;
+    border-color: #000000;
 }
 
 .close-button {
