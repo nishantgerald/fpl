@@ -1,18 +1,18 @@
 /* Center the FPL App Title */
 .app-header {
-    background: linear-gradient(135deg, #37003c, #3a6073);
+    background: #37003c !important;
     /* Gradient background */
-    color: white;
-    padding: 20px;
-    text-align: center;
-    font-family: 'Arial', sans-serif;
+    color: white !important;
+    padding: 20px !important;
+    text-align: center !important;
+    font-family: 'Arial', sans-serif !important;
     /* Clean and modern font */
-    border-radius: 10px;
+    border-radius: 10px !important;
     /* Rounded corners */
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
-    /* Add a slight shadow */
-    margin-bottom: 20px;
+    margin-bottom: 20px !important;
     /* Space below the header */
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2) !important; /* Add a subtle shadow */
+    transition: box-shadow 0.3s ease, background-color 0.3s ease !important;
 }
 
 .app-header h1 {
@@ -64,6 +64,10 @@ h2 {
     max-width: 400px;
     text-align: center;
     font-family: 'Arial', sans-serif;
+    border-style: groove;
+    border-color: #00a44d;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2); /* Add a subtle shadow */
+    transition: box-shadow 0.3s ease, background-color 0.3s ease;
 }
 
 .search-form {
@@ -90,14 +94,16 @@ h2 {
     flex: 1;
     padding: 10px 15px;
     font-size: 1rem;
-    border: 2px solid #ced4da;
     border-radius: 5px;
     outline: none;
     transition: border-color 0.3s ease;
+    border-width: 2px;
+    border-style: solid;
+    border-color: #00a44d;
 }
 
 .search-input:focus {
-    border-color: #37003c;
+    border-color: #00a44d;
     box-shadow: 0px 0px 4px #37003c;
 }
 
@@ -107,10 +113,15 @@ h2 {
     font-weight: bold;
     color: rgb(0, 0, 0);
     background-color: #01fc7a;
-    border: none;
     border-radius: 5px;
     cursor: pointer;
     transition: background-color 0.3s ease;
+    border-width: 2px;
+    border-style: outset;
+    border-color: #00a44d;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2); /* Add a subtle shadow */
+    transition: box-shadow 0.3s ease, background-color 0.3s ease;
+
 }
 
 .search-button:hover {
@@ -262,11 +273,14 @@ h2 {
     max-width: 600px;
     /* Slightly wider modal */
     margin: 50px auto;
-    background: linear-gradient(to right, rgb(2, 239, 255), rgb(98, 123, 255));
+    background: linear-gradient(to right, #01fc7a, #01fc7a);
     color: rgb(0, 0, 0);
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
     position: relative;
     /* Anchor close button to this element */
+    border-width: 3px;
+    border-style: solid;
+    border-color: #313f8a;
 }
 
 .close-button {
@@ -333,7 +347,7 @@ h2 {
     flex-direction: column;
     /* Stack label and value vertically */
     align-items: center;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.2);
     padding: 15px 20px;
     border-radius: 10px;
     text-align: center;
@@ -409,6 +423,11 @@ h2 {
     font-weight: bold;
     display: inline-block;
     text-align: center;
+    border-width: 2px;
+    border-style: outset;
+    border-color: #00a44d;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2); /* Add a subtle shadow */
+    transition: box-shadow 0.3s ease, background-color 0.3s ease;
 }
 
 .btn-primary:hover {
@@ -449,7 +468,7 @@ h2 {
 
 .navbar a {
     margin-right: 15px;
-    padding: 10px 15px;
+    /* padding: 10px 15px; */
     text-decoration: none;
     color: rgb(0, 0, 0);
     background-color: #01fc7a;
@@ -463,32 +482,47 @@ h2 {
 }
 
 /* Update table styles */
+/* Update table styles for rounded corners and softer look */
 #playersTable {
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate; /* Use separate borders for rounded corners */
+    border-spacing: 0; /* Remove spacing between cells */
     margin: 20px auto;
     background-color: white;
     border: 1px solid #ddd;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    border-radius: 10px; /* Add rounded corners */
+    overflow: hidden; /* Ensure content stays inside rounded corners */
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); /* Add a subtle shadow for depth */
 }
 
-#playersTable th,
-#playersTable td {
-    padding: 10px;
-    border-bottom: 1px solid #ddd;
-    text-align: left;
-}
-
+/* Ensure the header matches the rounded corners */
 #playersTable th {
     background-color: #37003c;
     color: white;
     text-transform: uppercase;
+    padding: 10px;
+    font-weight: bold;
+    border-bottom: 1px solid #ddd;
 }
 
-#playersTable tr:hover {
+#playersTable tr:last-child td {
+    border-bottom: none; /* Remove border at the bottom for the last row */
+}
+
+#playersTable td {
+    padding: 10px;
+    border-bottom: 1px solid #ddd;
+    text-align: left;
+    font-size: 0.9rem;
+    color: #333;
+}
+
+/* Add hover effect for rows */
+#playersTable tbody tr:hover {
     background-color: #f2f2f2;
 }
 
+/* Add zebra striping for rows */
 #playersTable tbody tr:nth-child(even) {
     background-color: #f9f9f9;
 }
