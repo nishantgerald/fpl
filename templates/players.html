@@ -11,64 +11,83 @@
     <script src="/static/js/players.js" defer></script>
 </head>
 
-<body>
-    <header class="app-header">
+<body style="font-family: 'Arial', sans-serif; background-color: #f4f5f7; color: #333;">
+    <header class="app-header" style="background-color: #37003c; color: white; padding: 15px 20px; text-align: center;">
         <h1>FPL App</h1>
     </header>
 
     <!-- Include Navigation Bar -->
     {% include "navbar.html" %}
 
-    <h1 style="text-align: center;">All Players</h1>
-
-    <!-- Filter Inputs -->
-    <div id="filters" class="filters">
-        <label for="teamFilter">Team:</label>
-        <select id="teamFilter">
-            <option value="">All Teams</option>
-        </select>
-
-        <label for="positionFilter">Position:</label>
-        <select id="positionFilter">
-            <option value="">All Positions</option>
-            <option value="GKP">Goalkeeper</option>
-            <option value="DEF">Defender</option>
-            <option value="MID">Midfielder</option>
-            <option value="FWD">Forward</option>
-        </select>
-
-        <label for="minPrice">Price (£):</label>
-        <input type="number" id="minPrice" placeholder="Min" step="0.1">
-        <input type="number" id="maxPrice" placeholder="Max" step="0.1">
-
-        <label for="minForm">Form:</label>
-        <input type="number" id="minForm" placeholder="Min" step="0.1">
-
-        <label for="statusFilter">Status:</label>
-        <select id="statusFilter">
-            <option value="">All Status</option>
-            <option value="Available">Available</option>
-            <option value="Injured">Injured</option>
-            <option value="Doubtful">Doubtful</option>
-            <option value="Suspended">Suspended</option>
-            <option value="Unavailable">Unavailable</option>
-        </select>
+    <!-- Page Title -->
+    <div style="text-align: center; margin: 20px;">
+        <h1 style="color: #37003c; font-size: 2rem;">Player Search</h1>
     </div>
 
-    <table id="playersTable" class="display">
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Team</th>
-                <th>Position</th>
-                <th>Price (£)</th>
-                <th>Total Points</th>
-                <th>Form</th>
-                <th>Selected By (%)</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-    </table>
+    <!-- Filter Inputs -->
+    <div id="filters" class="filters" style="display: flex; justify-content: center; gap: 15px; margin-bottom: 20px; flex-wrap: wrap;">
+        <div>
+            <label for="teamFilter" style="display: block; font-weight: bold; margin-bottom: 5px;">Team:</label>
+            <select id="teamFilter" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd;">
+                <option value="">All Teams</option>
+            </select>
+        </div>
+
+        <div>
+            <label for="positionFilter" style="display: block; font-weight: bold; margin-bottom: 5px;">Position:</label>
+            <select id="positionFilter" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd;">
+                <option value="">All Positions</option>
+                <option value="GKP">Goalkeeper</option>
+                <option value="DEF">Defender</option>
+                <option value="MID">Midfielder</option>
+                <option value="FWD">Forward</option>
+            </select>
+        </div>
+
+        <div>
+            <label for="minPrice" style="display: block; font-weight: bold; margin-bottom: 5px;">Price (£):</label>
+            <input type="number" id="minPrice" placeholder="Min" step="0.1" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
+            <input type="number" id="maxPrice" placeholder="Max" step="0.1" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
+        </div>
+
+        <div>
+            <label for="minForm" style="display: block; font-weight: bold; margin-bottom: 5px;">Form:</label>
+            <input type="number" id="minForm" placeholder="Min" step="0.1" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
+        </div>
+
+        <div>
+            <label for="statusFilter" style="display: block; font-weight: bold; margin-bottom: 5px;">Status:</label>
+            <select id="statusFilter" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd;">
+                <option value="">All Status</option>
+                <option value="Available">Available</option>
+                <option value="Injured">Injured</option>
+                <option value="Doubtful">Doubtful</option>
+                <option value="Suspended">Suspended</option>
+                <option value="Unavailable">Unavailable</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Players Table -->
+    <div style="padding: 0 20px;">
+        <table id="playersTable" class="display" style="width: 100%; border-collapse: collapse; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+            <thead style="background-color: #37003c; color: white;">
+                <tr>
+                    <th style="padding: 10px; text-align: left;">Name</th>
+                    <th style="padding: 10px; text-align: left;">Team</th>
+                    <th style="padding: 10px; text-align: left;">Position</th>
+                    <th style="padding: 10px; text-align: left;">Price (£)</th>
+                    <th style="padding: 10px; text-align: left;">Total Points</th>
+                    <th style="padding: 10px; text-align: left;">Form</th>
+                    <th style="padding: 10px; text-align: left;">Selected By (%)</th>
+                    <th style="padding: 10px; text-align: left;">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Data will be dynamically loaded -->
+            </tbody>
+        </table>
+    </div>
 </body>
 
 </html>

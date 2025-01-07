@@ -1,6 +1,6 @@
 /* Center the FPL App Title */
 .app-header {
-    background: linear-gradient(135deg, #3a7bd5, #3a6073);
+    background: linear-gradient(135deg, #37003c, #3a6073);
     /* Gradient background */
     color: white;
     padding: 20px;
@@ -19,6 +19,11 @@
     font-size: 2.5rem;
     margin: 0;
     font-weight: bold;
+}
+
+body {
+    background-color: #f4f5f7;
+    
 }
 
 /* Center the Bench Header */
@@ -46,7 +51,7 @@ h2 {
 }
 
 .tab-button.active {
-    background: #1d6fa5;
+    background: #37003c;
 }
 
 /* User ID Search Section */
@@ -58,6 +63,7 @@ h2 {
     box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
     max-width: 400px;
     text-align: center;
+    font-family: 'Arial', sans-serif;
 }
 
 .search-form {
@@ -91,16 +97,16 @@ h2 {
 }
 
 .search-input:focus {
-    border-color: #007bff;
-    box-shadow: 0px 0px 4px #007bff;
+    border-color: #37003c;
+    box-shadow: 0px 0px 4px #37003c;
 }
 
 .search-button {
     padding: 10px 20px;
     font-size: 1rem;
     font-weight: bold;
-    color: white;
-    background-color: #007bff;
+    color: rgb(0, 0, 0);
+    background-color: #01fc7a;
     border: none;
     border-radius: 5px;
     cursor: pointer;
@@ -108,11 +114,12 @@ h2 {
 }
 
 .search-button:hover {
-    background-color: #0056b3;
+    color: rgb(255, 255, 255);
+    background-color: #1a804b;
 }
 
 .search-button:active {
-    background-color: #003f7f;
+    background-color: #1a804b;
 }
 
 /* Formation Field */
@@ -192,7 +199,7 @@ h2 {
     position: absolute;
     top: 5px;
     right: 5px;
-    background: #3498db;
+    background: #296dc5;
     color: white;
     border: none;
     border-radius: 50%;
@@ -229,6 +236,7 @@ h2 {
     /* Reduce padding above the title */
     margin-bottom: 10px;
     /* Optional: Adjust padding below the title */
+    font-family: 'Arial', sans-serif;
 }
 
 /* Modal Styling */
@@ -254,8 +262,8 @@ h2 {
     max-width: 600px;
     /* Slightly wider modal */
     margin: 50px auto;
-    background: linear-gradient(135deg, #3a7bd5, #3a6073);
-    color: white;
+    background: linear-gradient(to right, rgb(2, 239, 255), rgb(98, 123, 255));
+    color: rgb(0, 0, 0);
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
     position: relative;
     /* Anchor close button to this element */
@@ -334,14 +342,14 @@ h2 {
 .stat-label {
     font-size: 1rem;
     font-weight: bold;
-    color: #ddd;
+    color: #000000;
     margin-bottom: 5px;
 }
 
 .stat-value {
     font-size: 1.4rem;
     font-weight: 700;
-    color: white;
+    color: rgb(0, 0, 0);
 }
 
 /* Position Colors */
@@ -385,7 +393,7 @@ h2 {
 
 /* General app header style */
 .app-header {
-    background-color: #1E90FF;
+    background-color: #37003c;
     color: white;
     padding: 10px;
     text-align: center;
@@ -435,19 +443,60 @@ h2 {
     display: flex;
     justify-content: flex-start;
     padding: 10px 20px;
-    background-color: #ffffff;
+    background-color: #f4f5f7;
+    font-family: 'Arial', sans-serif;
 }
 
 .navbar a {
     margin-right: 15px;
     padding: 10px 15px;
     text-decoration: none;
-    color: white;
-    background-color: #1E90FF;
+    color: rgb(0, 0, 0);
+    background-color: #01fc7a;
     border-radius: 5px;
     font-weight: bold;
 }
 
 .navbar a:hover {
-    background-color: #1C86EE;
+    color: rgb(255, 255, 255);
+    background-color: #1a804b;
+}
+
+/* Update table styles */
+#playersTable {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px auto;
+    background-color: white;
+    border: 1px solid #ddd;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+#playersTable th,
+#playersTable td {
+    padding: 10px;
+    border-bottom: 1px solid #ddd;
+    text-align: left;
+}
+
+#playersTable th {
+    background-color: #37003c;
+    color: white;
+    text-transform: uppercase;
+}
+
+#playersTable tr:hover {
+    background-color: #f2f2f2;
+}
+
+#playersTable tbody tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+/* Filter input styling */
+.filters input,
+.filters select {
+    padding: 10px;
+    border-radius: 5px;
+    border: 1px solid #ddd;
 }
