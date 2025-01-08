@@ -121,37 +121,65 @@ def players_data():
     if not data:
         return jsonify({"error": "Failed to fetch player data"}), 500
 
-    # Get filter parameters from the request
-    min_points = request.args.get("min_points", default=0, type=float)
-    max_points = request.args.get("max_points", default=float("inf"), type=float)
-    min_form = request.args.get("min_form", default=0, type=float)
-    max_form = request.args.get("max_form", default=float("inf"), type=float)
-    min_selected = request.args.get("min_selected", default=0, type=float)
-    max_selected = request.args.get("max_selected", default=100, type=float)
+    fixtures_response = requests.get("https://fantasy.premierleague.com/api/fixtures/")
+    if fixtures_response.status_code != 200:
+        return jsonify({"error": "Failed to fetch fixture data"}), 500
+    fixtures = fixtures_response.json()
+
+    current_gameweek = fetch_current_gameweek()
+    if not current_gameweek:
+        return jsonify({"error": "Failed to fetch current gameweek"}), 500
+
+    # Fetch team abbreviations
+    team_abbreviations = {team["id"]: team["short_name"] for team in data["teams"]}
 
     players = data["elements"]
-    teams = fetch_teams()
+    teams = {team["id"]: team["name"] for team in data["teams"]}
 
-    # Filter players based on the query parameters
-    player_list = [
-        {
+    # Group fixtures by team
+    team_fixtures = {}
+    for fixture in fixtures:
+        if fixture["event"] is None or fixture["event"] < current_gameweek:
+            continue
+        team_h = fixture["team_h"]
+        team_a = fixture["team_a"]
+        if team_h not in team_fixtures:
+            team_fixtures[team_h] = []
+        if team_a not in team_fixtures:
+            team_fixtures[team_a] = []
+        team_fixtures[team_h].append({"difficulty": fixture["team_h_difficulty"], "gameweek": fixture["event"]})
+        team_fixtures[team_a].append({"difficulty": fixture["team_a_difficulty"], "gameweek": fixture["event"]})
+
+    # Filter players and add Next 3 FDR
+    player_list = []
+    for player in players:
+        team_id = player["team"]
+        # Filter fixtures that are strictly after the current gameweek
+        future_fixtures = [
+            fixture for fixture in team_fixtures.get(team_id, [])
+            if fixture["gameweek"] > current_gameweek
+        ]
+        # Sort the fixtures by gameweek and take the next 3
+        next_fixtures = sorted(future_fixtures, key=lambda x: x["gameweek"])[:3]
+        
+        # Calculate FDR for the next 3 fixtures
+        next_3_fdr = sum(fixture["difficulty"] for fixture in next_fixtures)
+
+        player_list.append({
             "id": player["id"],
             "name": f"{player['first_name']} {player['second_name']}",
-            "team": teams.get(player["team"], "Unknown"),
+            "team": team_abbreviations.get(team_id, "UNK"),
             "position": POSITION_MAP[player["element_type"]],
             "price": player["now_cost"] / 10,
             "total_points": player["total_points"],
             "form": player["form"],
             "selected_by_percent": player["selected_by_percent"],
             "status": STATUS_MAP.get(player["status"], "Unknown"),
-        }
-        for player in players
-        if min_points <= player["total_points"] <= max_points
-        and min_form <= float(player["form"]) <= max_form
-        and min_selected <= float(player["selected_by_percent"]) <= max_selected
-    ]
+            "next_3_fdr": next_3_fdr,
+            "current_gw": current_gameweek,
+        })
 
-    return jsonify({"data": player_list})  # Add "data" key
+    return jsonify({"data": player_list})
 
 @app.route("/api/fixtures")
 def fixtures_data():

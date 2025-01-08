@@ -4,14 +4,15 @@ $(document).ready(function () {
     const table = $("#playersTable").DataTable({
         ajax: "/api/players",
         columns: [
-            { data: "name" },
-            { data: "team" },
-            { data: "position" },
-            { data: "price" },
-            { data: "total_points" },
-            { data: "form" },
-            { data: "selected_by_percent" },
-            { data: "status" }
+            { data: "name", title: "Name" },
+            { data: "team", title: "Team" },
+            { data: "position", title: "Position" },
+            { data: "price", title: "Price (£)" },
+            { data: "total_points", title: "Total Points" },
+            { data: "form", title: "Form" },
+            { data: "selected_by_percent", title: "Selected By (%)" },
+            { data: "status", title: "Status" },
+            { data: "next_3_fdr", title: "Next 3 FDR" }
         ],
         initComplete: function () {
             // Dynamically populate the team filter dropdown
@@ -38,41 +39,41 @@ $(document).ready(function () {
     function applyFilters() {
         const team = $("#teamFilter").val();
         const position = $("#positionFilter").val();
-        const minPrice = $("#minPrice").val();
-        const maxPrice = $("#maxPrice").val();
-        const minPoints = $("#minPoints").val();
-        const maxPoints = $("#maxPoints").val();
-        const minForm = $("#minForm").val();
-        const maxForm = $("#maxForm").val();
-        const minSelectedBy = $("#minSelectedBy").val();
-        const maxSelectedBy = $("#maxSelectedBy").val();
+        const minPrice = parseFloat($("#minPrice").val());
+        const maxPrice = parseFloat($("#maxPrice").val());
+        const minPoints = parseFloat($("#minPoints").val());
+        const maxPoints = parseFloat($("#maxPoints").val());
+        const minForm = parseFloat($("#minForm").val());
+        const maxForm = parseFloat($("#maxForm").val());
+        const minSelectedBy = parseFloat($("#minSelectedBy").val());
+        const maxSelectedBy = parseFloat($("#maxSelectedBy").val());
         const status = $("#statusFilter").val();
-    
+
         // Preserve existing URL parameters
         const params = new URLSearchParams(window.location.search);
-    
+
         // Update parameters based on current filter values
         if (team) params.set("team", team); else params.delete("team");
         if (position) params.set("position", position); else params.delete("position");
-        if (minPrice) params.set("price_min", minPrice); else params.delete("price_min");
-        if (maxPrice) params.set("price_max", maxPrice); else params.delete("price_max");
-        if (minPoints) params.set("points_min", minPoints); else params.delete("points_min");
-        if (maxPoints) params.set("points_max", maxPoints); else params.delete("points_max");
-        if (minForm) params.set("form_min", minForm); else params.delete("form_min");
-        if (maxForm) params.set("form_max", maxForm); else params.delete("form_max");
-        if (minSelectedBy) params.set("selected_min", minSelectedBy); else params.delete("selected_min");
-        if (maxSelectedBy) params.set("selected_max", maxSelectedBy); else params.delete("selected_max");
+        if (!isNaN(minPrice)) params.set("price_min", minPrice); else params.delete("price_min");
+        if (!isNaN(maxPrice)) params.set("price_max", maxPrice); else params.delete("price_max");
+        if (!isNaN(minPoints)) params.set("points_min", minPoints); else params.delete("points_min");
+        if (!isNaN(maxPoints)) params.set("points_max", maxPoints); else params.delete("points_max");
+        if (!isNaN(minForm)) params.set("form_min", minForm); else params.delete("form_min");
+        if (!isNaN(maxForm)) params.set("form_max", maxForm); else params.delete("form_max");
+        if (!isNaN(minSelectedBy)) params.set("selected_min", minSelectedBy); else params.delete("selected_min");
+        if (!isNaN(maxSelectedBy)) params.set("selected_max", maxSelectedBy); else params.delete("selected_max");
         if (status) params.set("status", status); else params.delete("status");
-    
+
         // Update the URL only if not initializing
         if (!initializing) {
             const newURL = `${window.location.pathname}?${params.toString()}`;
             window.history.replaceState({}, "", newURL);
         }
-    
+
         // Use DataTables' built-in filter
-        $.fn.dataTable.ext.search = [];
-        $.fn.dataTable.ext.search.push(function (settings, data, dataIndex) {
+        $.fn.dataTable.ext.search = []; // Clear existing filters
+        $.fn.dataTable.ext.search.push(function (settings, data) {
             const dataTeam = data[1]; // Team column
             const dataPosition = data[2]; // Position column
             const dataPrice = parseFloat(data[3]); // Price column
@@ -80,22 +81,22 @@ $(document).ready(function () {
             const dataForm = parseFloat(data[5]); // Form column
             const dataSelectedBy = parseFloat(data[6]); // Selected By (%) column
             const dataStatus = data[7]; // Status column
-    
+
             return (
                 (!team || dataTeam === team) &&
                 (!position || dataPosition === position) &&
-                (!minPrice || dataPrice >= parseFloat(minPrice)) &&
-                (!maxPrice || dataPrice <= parseFloat(maxPrice)) &&
-                (!minPoints || dataPoints >= parseFloat(minPoints)) &&
-                (!maxPoints || dataPoints <= parseFloat(maxPoints)) &&
-                (!minForm || dataForm >= parseFloat(minForm)) &&
-                (!maxForm || dataForm <= parseFloat(maxForm)) &&
-                (!minSelectedBy || dataSelectedBy >= parseFloat(minSelectedBy)) &&
-                (!maxSelectedBy || dataSelectedBy <= parseFloat(maxSelectedBy)) &&
+                (isNaN(minPrice) || dataPrice >= minPrice) &&
+                (isNaN(maxPrice) || dataPrice <= maxPrice) &&
+                (isNaN(minPoints) || dataPoints >= minPoints) &&
+                (isNaN(maxPoints) || dataPoints <= maxPoints) &&
+                (isNaN(minForm) || dataForm >= minForm) &&
+                (isNaN(maxForm) || dataForm <= maxForm) &&
+                (isNaN(minSelectedBy) || dataSelectedBy >= minSelectedBy) &&
+                (isNaN(maxSelectedBy) || dataSelectedBy <= maxSelectedBy) &&
                 (!status || dataStatus === status)
             );
         });
-    
+
         // Redraw the table to apply the filter
         table.draw();
     }
