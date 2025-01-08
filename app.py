@@ -120,8 +120,19 @@ def players_data():
     data = fetch_player_data()
     if not data:
         return jsonify({"error": "Failed to fetch player data"}), 500
+
+    # Get filter parameters from the request
+    min_points = request.args.get("min_points", default=0, type=float)
+    max_points = request.args.get("max_points", default=float("inf"), type=float)
+    min_form = request.args.get("min_form", default=0, type=float)
+    max_form = request.args.get("max_form", default=float("inf"), type=float)
+    min_selected = request.args.get("min_selected", default=0, type=float)
+    max_selected = request.args.get("max_selected", default=100, type=float)
+
     players = data["elements"]
     teams = fetch_teams()
+
+    # Filter players based on the query parameters
     player_list = [
         {
             "id": player["id"],
@@ -135,9 +146,42 @@ def players_data():
             "status": STATUS_MAP.get(player["status"], "Unknown"),
         }
         for player in players
+        if min_points <= player["total_points"] <= max_points
+        and min_form <= float(player["form"]) <= max_form
+        and min_selected <= float(player["selected_by_percent"]) <= max_selected
     ]
+
     return jsonify({"data": player_list})  # Add "data" key
 
+@app.route("/api/fixtures")
+def fixtures_data():
+    url = "https://fantasy.premierleague.com/api/fixtures/"
+    response = requests.get(url)
+    if response.status_code != 200:
+        return jsonify({"error": "Failed to fetch fixture data"}), 500
+
+    fixtures = response.json()
+
+    # Fetch team abbreviations from players data
+    data = fetch_player_data()
+    if not data:
+        return jsonify({"error": "Failed to fetch player data for team abbreviations"}), 500
+
+    team_abbreviations = {team["id"]: team["short_name"] for team in data["teams"]}
+
+    # Extract required data
+    fixture_list = [
+        {
+            "gameweek": fixture["event"],
+            "home_team": team_abbreviations.get(fixture["team_h"], "UNK"),
+            "away_team": team_abbreviations.get(fixture["team_a"], "UNK"),
+            "team_h_difficulty": fixture["team_h_difficulty"],
+            "team_a_difficulty": fixture["team_a_difficulty"],
+        }
+        for fixture in fixtures
+    ]
+
+    return jsonify(fixture_list)
 
 @app.route("/")
 def home():
