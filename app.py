@@ -113,7 +113,7 @@ def player_stats(player_id):
 
 @app.route("/players")
 def players_page():
-    return render_template("players.html")
+    return render_template("player_search.html")
 
 @app.route("/api/players")
 def players_data():
