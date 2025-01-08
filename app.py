@@ -84,26 +84,30 @@ def organize_team(picks, players):
             bench.append(player_data)
     return lineup, bench
 
+@app.route("/players")
+def players_page():
+    return render_template("player_search.html")
 
-@app.route("/player-stats/<int:player_id>")
-def player_stats(player_id):
-    # Fetch player data
+@app.route("/api/players", methods=["GET"])
+def players_data():
     data = fetch_player_data()
     if not data:
         return jsonify({"error": "Failed to fetch player data"}), 500
-    
+
     # Fetch fixtures data
     fixtures_response = requests.get("https://fantasy.premierleague.com/api/fixtures/")
     if fixtures_response.status_code != 200:
         return jsonify({"error": "Failed to fetch fixture data"}), 500
     fixtures = fixtures_response.json()
-    
-    # Determine the current gameweek
+
+    # Determine current gameweek
     current_gameweek = fetch_current_gameweek()
     if not current_gameweek:
         return jsonify({"error": "Failed to fetch current gameweek"}), 500
 
-    # Prepare team fixtures mapping
+    # Prepare data mappings
+    team_abbreviations = {team["id"]: team["short_name"] for team in data["teams"]}
+    players = {p["id"]: p for p in data["elements"]}
     team_fixtures = {}
     for fixture in fixtures:
         if fixture["event"] is None or fixture["event"] < current_gameweek:
@@ -117,94 +121,43 @@ def player_stats(player_id):
         team_fixtures[team_h].append({"difficulty": fixture["team_h_difficulty"], "gameweek": fixture["event"]})
         team_fixtures[team_a].append({"difficulty": fixture["team_a_difficulty"], "gameweek": fixture["event"]})
 
-    # Map players and teams
-    players = {p["id"]: p for p in data["elements"]}
-    teams = fetch_teams()  # Fetch the team ID-to-name mapping
+    # Check if player_id is provided
+    player_id = request.args.get("player_id", type=int)
+    if player_id:
+        # Return data for a single player
+        player = players.get(player_id)
+        if player:
+            team_id = player["team"]
+            future_fixtures = [
+                fixture for fixture in team_fixtures.get(team_id, [])
+                if fixture["gameweek"] > current_gameweek
+            ]
+            next_fixtures = sorted(future_fixtures, key=lambda x: x["gameweek"])[:3]
+            next_3_fdr = sum(fixture["difficulty"] for fixture in next_fixtures)
 
-    # Find player data
-    player = players.get(player_id)
-    if player:
-        # Fetch the player's team ID
-        team_id = player["team"]
-
-        # Calculate Next 3 FDR
-        future_fixtures = [
-            fixture for fixture in team_fixtures.get(team_id, [])
-            if fixture["gameweek"] > current_gameweek
-        ]
-        next_fixtures = sorted(future_fixtures, key=lambda x: x["gameweek"])[:3]
-        next_3_fdr = sum(fixture["difficulty"] for fixture in next_fixtures)
-
-        return jsonify(
-            {
+            return jsonify({
                 "name": f"{player['first_name']} {player['second_name']}",
                 "photo": f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{player['code']}.png",
-                "team": teams.get(
-                    player["team"], "Unknown"
-                ),  # Translate team ID to name
+                "team": team_abbreviations.get(team_id, "UNK"),
                 "position": POSITION_MAP[player["element_type"]],
                 "price": player["now_cost"] / 10,
                 "total_points": player["total_points"],
                 "form": player["form"],
                 "selected_by_percent": player["selected_by_percent"],
                 "status": STATUS_MAP.get(player["status"], "Unknown"),
-                "next_3_fdr": next_3_fdr,  # Include Next 3 FDR
-            }
-        )
-    return jsonify({"error": "Player not found"}), 404
+                "next_3_fdr": next_3_fdr,
+            })
+        return jsonify({"error": "Player not found"}), 404
 
-@app.route("/players")
-def players_page():
-    return render_template("player_search.html")
-
-@app.route("/api/players")
-def players_data():
-    data = fetch_player_data()
-    if not data:
-        return jsonify({"error": "Failed to fetch player data"}), 500
-
-    fixtures_response = requests.get("https://fantasy.premierleague.com/api/fixtures/")
-    if fixtures_response.status_code != 200:
-        return jsonify({"error": "Failed to fetch fixture data"}), 500
-    fixtures = fixtures_response.json()
-
-    current_gameweek = fetch_current_gameweek()
-    if not current_gameweek:
-        return jsonify({"error": "Failed to fetch current gameweek"}), 500
-
-    # Fetch team abbreviations
-    team_abbreviations = {team["id"]: team["short_name"] for team in data["teams"]}
-
-    players = data["elements"]
-    teams = {team["id"]: team["name"] for team in data["teams"]}
-
-    # Group fixtures by team
-    team_fixtures = {}
-    for fixture in fixtures:
-        if fixture["event"] is None or fixture["event"] < current_gameweek:
-            continue
-        team_h = fixture["team_h"]
-        team_a = fixture["team_a"]
-        if team_h not in team_fixtures:
-            team_fixtures[team_h] = []
-        if team_a not in team_fixtures:
-            team_fixtures[team_a] = []
-        team_fixtures[team_h].append({"difficulty": fixture["team_h_difficulty"], "gameweek": fixture["event"]})
-        team_fixtures[team_a].append({"difficulty": fixture["team_a_difficulty"], "gameweek": fixture["event"]})
-
-    # Filter players and add Next 3 FDR
+    # Return data for all players
     player_list = []
-    for player in players:
+    for player in players.values():
         team_id = player["team"]
-        # Filter fixtures that are strictly after the current gameweek
         future_fixtures = [
             fixture for fixture in team_fixtures.get(team_id, [])
             if fixture["gameweek"] > current_gameweek
         ]
-        # Sort the fixtures by gameweek and take the next 3
         next_fixtures = sorted(future_fixtures, key=lambda x: x["gameweek"])[:3]
-        
-        # Calculate FDR for the next 3 fixtures
         next_3_fdr = sum(fixture["difficulty"] for fixture in next_fixtures)
 
         player_list.append({
