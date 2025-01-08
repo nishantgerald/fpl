@@ -25,8 +25,8 @@ async function showPlayerStats(playerId) {
                     <span class="stat-value">${data.total_points}</span>
                 </div>
                 <div class="stat">
-                    <span class="stat-label">Bonus</span>
-                    <span class="stat-value">${data.bonus || 0}</span>
+                    <span class="stat-label">Next 3 FDR</span>
+                    <span class="stat-value">${data.next_3_fdr || 'N/A'}</span>
                 </div>
                 <div class="stat">
                     <span class="stat-label">Selected by</span>
@@ -46,5 +46,8 @@ async function showPlayerStats(playerId) {
 }
 
 function closeModal() {
-    document.getElementById("modal").style.display = "none";
+    const modal = document.getElementById("modal");
+    if (modal) {
+        modal.style.display = "none";
+    }
 }
