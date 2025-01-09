@@ -357,6 +357,10 @@ def players_page():
 
 @app.route("/api/players", methods=["GET"])
 def players_data():
+    """
+    API endpoint to return player data. Supports FCPS calculations and filtering.
+    If a player_id is provided, returns data for that specific player.
+    """
     data = fetch_player_data()
     if not data:
         return jsonify({"error": "Failed to fetch player data"}), 500
@@ -388,14 +392,46 @@ def players_data():
         team_fixtures[team_h].append({"difficulty": fixture["team_h_difficulty"], "gameweek": fixture["event"]})
         team_fixtures[team_a].append({"difficulty": fixture["team_a_difficulty"], "gameweek": fixture["event"]})
 
-    # Fetch global normalization values
+    # Fetch global normalization values for FCPS
     normalization_values = get_normalization_values()
 
-    # Parse query parameters for filtering
+    # Parse query parameters for filtering and specific player
+    player_id = request.args.get("player_id", type=int)
     min_fcps = request.args.get("min_fcps", default=None, type=float)
     max_fcps = request.args.get("max_fcps", default=None, type=float)
 
-    # Calculate FCPS for all players
+    # If player_id is provided, return data for that specific player
+    if player_id:
+        player = players.get(player_id)
+        if player:
+            team_id = player["team"]
+            next_3_fdr = calculate_next_3_fdr(team_id, team_fixtures, current_gameweek)
+
+            player_data = [{
+                "id": player["id"],
+                "name": f"{player['first_name']} {player['second_name']}",
+                "team": team_abbreviations.get(team_id, "UNK"),
+                "position": POSITION_MAP[player["element_type"]],
+                "price": player["now_cost"] / 10,
+                "total_points": player["total_points"],
+                "form": player["form"],
+                "selected_by_percent": player["selected_by_percent"],
+                "status": STATUS_MAP.get(player["status"], "Unknown"),
+                "next_3_fdr": next_3_fdr,
+                "ict_index": player["ict_index"],
+                "photo": f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{player['code']}.png"
+            }]
+
+            # Convert to DataFrame to calculate FCPS for the single player
+            df = pd.DataFrame(player_data)
+            df = calculate_fcps(df, max_values=normalization_values)
+
+            # Convert back to list of dicts
+            return jsonify({"data": df.to_dict(orient="records")})
+        else:
+            return jsonify({"error": "Player not found"}), 404
+
+    # If no player_id is provided, calculate data for all players
     player_list = []
     for player in players.values():
         team_id = player["team"]
@@ -412,11 +448,11 @@ def players_data():
             "selected_by_percent": player["selected_by_percent"],
             "status": STATUS_MAP.get(player["status"], "Unknown"),
             "next_3_fdr": next_3_fdr,
-            "current_gw": current_gameweek,
             "ict_index": player["ict_index"],
+            "photo": f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{player['code']}.png"
         })
 
-    # Convert to DataFrame
+    # Convert to DataFrame for FCPS calculation
     df = pd.DataFrame(player_list)
 
     # Ensure numeric conversion
@@ -424,7 +460,7 @@ def players_data():
     for col in numeric_columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Calculate FCPS and include it in the response
+    # Calculate FCPS for all players
     df = calculate_fcps(df, max_values=normalization_values)
 
     # Apply min/max FCPS filters
