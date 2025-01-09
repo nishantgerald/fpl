@@ -32,9 +32,28 @@ def get_cached_data():
         cached_data = fetch_player_data()
     return cached_data
 
-def calculate_fcps(dataframe, weights=None):
+def get_normalization_values():
+    """
+    Fetch global max values for normalization across all players.
+    """
+    data = get_cached_data()
+    if not data:
+        return None
+
+    players = data["elements"]
+    max_values = {
+        "total_points": max(p["total_points"] for p in players),
+        "form": max(float(p["form"]) for p in players),
+        "next_3_fdr": 15,  # Hardcoded maximum for next 3 fixtures FDR
+        "ict_index": max(float(p["ict_index"]) for p in players),
+    }
+    return max_values
+
+def calculate_fcps(dataframe, weights=None, max_values=None):
     """
     Calculate FCPS (Fantasy Composite Player Score) for a given DataFrame.
+    If max_values is provided, it will use them for normalization; otherwise, 
+    it calculates normalization values dynamically from the DataFrame.
     """
     if weights is None:
         weights = {
@@ -49,16 +68,21 @@ def calculate_fcps(dataframe, weights=None):
     for col in numeric_columns:
         dataframe[col] = pd.to_numeric(dataframe[col], errors="coerce")  # Convert to numeric
 
-    # Check for missing or invalid data
+    # Handle missing data
     if dataframe[numeric_columns].isnull().any().any():
-        print("Warning: Some columns contain invalid or missing data. These will be filled with 0.")
-        dataframe.fillna(0, inplace=True)  # Handle NaN values (optional: handle differently)
+        dataframe.fillna(0, inplace=True)
 
-    # Normalize columns
-    dataframe["total_points_norm"] = dataframe["total_points"] / dataframe["total_points"].max()
-    dataframe["form_norm"] = dataframe["form"] / dataframe["form"].max()
-    dataframe["fdr_norm"] = dataframe["next_3_fdr"] / dataframe["next_3_fdr"].max()
-    dataframe["ict_index_norm"] = dataframe["ict_index"] / dataframe["ict_index"].max()
+    # Use provided max values for normalization or calculate them dynamically
+    if max_values:
+        dataframe["total_points_norm"] = dataframe["total_points"] / max_values["total_points"]
+        dataframe["form_norm"] = dataframe["form"] / max_values["form"]
+        dataframe["fdr_norm"] = dataframe["next_3_fdr"] / max_values["next_3_fdr"]
+        dataframe["ict_index_norm"] = dataframe["ict_index"] / max_values["ict_index"]
+    else:
+        dataframe["total_points_norm"] = dataframe["total_points"] / dataframe["total_points"].max()
+        dataframe["form_norm"] = dataframe["form"] / dataframe["form"].max()
+        dataframe["fdr_norm"] = dataframe["next_3_fdr"] / dataframe["next_3_fdr"].max()
+        dataframe["ict_index_norm"] = dataframe["ict_index"] / dataframe["ict_index"].max()
 
     # Calculate FCPS
     dataframe["fcps"] = (
@@ -70,8 +94,8 @@ def calculate_fcps(dataframe, weights=None):
 
     # Drop intermediate normalization columns for cleaner output
     dataframe.drop(
-        ["total_points_norm", "form_norm", "fdr_norm", "ict_index_norm"], 
-        axis=1, 
+        ["total_points_norm", "form_norm", "fdr_norm", "ict_index_norm"],
+        axis=1,
         inplace=True
     )
 
@@ -192,6 +216,9 @@ def get_player_dataframe(player_ids, starting_eleven_ids):
         team_fixtures[team_h].append({"difficulty": fixture["team_h_difficulty"], "gameweek": fixture["event"]})
         team_fixtures[team_a].append({"difficulty": fixture["team_a_difficulty"], "gameweek": fixture["event"]})
 
+    # Fetch global normalization values
+    normalization_values = get_normalization_values()
+
     # Filter the data for the given player IDs
     filtered_players = []
     for player_id in player_ids:
@@ -218,11 +245,13 @@ def get_player_dataframe(player_ids, starting_eleven_ids):
     # Convert the filtered list into a DataFrame
     if filtered_players:
         df = pd.DataFrame(filtered_players)
-        # Calculate FCPS using FCPS calc function
-        df = calculate_fcps(df)
-        # print("-----")
-        # print("User's Team")
-        # print(df)
+
+        # Calculate FCPS using global normalization values
+        df = calculate_fcps(df, max_values=normalization_values)
+
+        print("-----")
+        print("User's Team")
+        print(df)
         return df
     else:
         print("No player data fetched for the given IDs.")
@@ -230,7 +259,7 @@ def get_player_dataframe(player_ids, starting_eleven_ids):
 
 def print_top_players():
     """
-    Calculates FCPS (Fantasy Composity Player Score) for all players, sorts by position and FCPS, 
+    Calculates FCPS (Fantasy Composite Player Score) for all players, sorts by position and FCPS, 
     and selects the top players for each position to form the top players DataFrame.
     """
     # Use cached data
@@ -268,6 +297,9 @@ def print_top_players():
         team_fixtures[team_h].append({"difficulty": fixture["team_h_difficulty"], "gameweek": fixture["event"]})
         team_fixtures[team_a].append({"difficulty": fixture["team_a_difficulty"], "gameweek": fixture["event"]})
 
+    # Fetch global normalization values
+    normalization_values = get_normalization_values()
+
     # Calculate FCPS for all players
     player_list = []
     for player in players.values():
@@ -295,8 +327,8 @@ def print_top_players():
     # Ensure numeric conversion
     df["ict_index"] = pd.to_numeric(df["ict_index"], errors="coerce")
 
-    # Calculate FCPS using FCPS calc function
-    df = calculate_fcps(df)
+    # Calculate FCPS using global normalization values
+    df = calculate_fcps(df, max_values=normalization_values)
 
     # Sort by FCPS
     df = df.sort_values(by="fcps", ascending=False)
@@ -310,9 +342,9 @@ def print_top_players():
     # Combine all top players into a single DataFrame
     top_players_df = pd.concat([top_gkps, top_defs, top_mids, top_fwds])
 
-    # print("-----")
-    # print("Top Players")
-    # print(top_players_df)
+    print("-----")
+    print("Top Players")
+    print(top_players_df)
 
     return top_players_df
 
@@ -353,6 +385,9 @@ def players_data():
         team_fixtures[team_h].append({"difficulty": fixture["team_h_difficulty"], "gameweek": fixture["event"]})
         team_fixtures[team_a].append({"difficulty": fixture["team_a_difficulty"], "gameweek": fixture["event"]})
 
+    # Fetch global normalization values
+    normalization_values = get_normalization_values()
+
     # Check if player_id is provided
     player_id = request.args.get("player_id", type=int)
     if player_id:
@@ -361,6 +396,21 @@ def players_data():
         if player:
             team_id = player["team"]
             next_3_fdr = calculate_next_3_fdr(team_id, team_fixtures, current_gameweek)
+
+            # Prepare the player's data as a DataFrame
+            single_player_data = [{
+                "total_points": player["total_points"],
+                "form": float(player["form"]),
+                "next_3_fdr": next_3_fdr,
+                "ict_index": float(player["ict_index"]),
+            }]
+            single_player_df = pd.DataFrame(single_player_data)
+
+            # Calculate FCPS for the single player using global normalization values
+            single_player_df = calculate_fcps(single_player_df, max_values=normalization_values)
+
+            # Extract the FCPS value
+            fcps = single_player_df.iloc[0]["fcps"]
 
             return jsonify({
                 "name": f"{player['first_name']} {player['second_name']}",
@@ -373,6 +423,7 @@ def players_data():
                 "selected_by_percent": player["selected_by_percent"],
                 "status": STATUS_MAP.get(player["status"], "Unknown"),
                 "next_3_fdr": next_3_fdr,
+                "fcps": fcps,  # Add FCPS to the response
             })
         return jsonify({"error": "Player not found"}), 404
 
@@ -394,9 +445,24 @@ def players_data():
             "status": STATUS_MAP.get(player["status"], "Unknown"),
             "next_3_fdr": next_3_fdr,
             "current_gw": current_gameweek,
+            "ict_index": player["ict_index"],
         })
 
-    return jsonify({"data": player_list})
+    # Convert to DataFrame
+    df = pd.DataFrame(player_list)
+
+    # Ensure numeric conversion
+    numeric_columns = ["total_points", "form", "next_3_fdr", "ict_index"]
+    for col in numeric_columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Calculate FCPS and include it in the response
+    df = calculate_fcps(df, max_values=normalization_values)
+
+    # Convert DataFrame back to list of dicts for JSON response
+    player_list_with_fcps = df.to_dict(orient="records")
+
+    return jsonify({"data": player_list_with_fcps})
 
 @app.route("/api/fixtures")
 def fixtures_data():
