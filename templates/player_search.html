@@ -32,7 +32,7 @@
                 <option value="">All Teams</option>
             </select>
         </div>
-    
+
         <div>
             <label for="positionFilter" style="display: block; font-weight: bold; margin-bottom: 5px;">Position:</label>
             <select id="positionFilter" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd;">
@@ -43,31 +43,31 @@
                 <option value="FWD">Forward</option>
             </select>
         </div>
-    
+
         <div>
             <label for="minPrice" style="display: block; font-weight: bold; margin-bottom: 5px;">Price (£):</label>
             <input type="number" id="minPrice" placeholder="Min" step="0.1" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
             <input type="number" id="maxPrice" placeholder="Max" step="0.1" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
         </div>
-    
+
         <div>
             <label for="minPoints" style="display: block; font-weight: bold; margin-bottom: 5px;">Total Points:</label>
             <input type="number" id="minPoints" placeholder="Min" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
             <input type="number" id="maxPoints" placeholder="Max" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
         </div>
-    
+
         <div>
             <label for="minForm" style="display: block; font-weight: bold; margin-bottom: 5px;">Form:</label>
             <input type="number" id="minForm" placeholder="Min" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
             <input type="number" id="maxForm" placeholder="Max" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
         </div>
-    
+
         <div>
             <label for="minSelectedBy" style="display: block; font-weight: bold; margin-bottom: 5px;">Selected By (%):</label>
             <input type="number" id="minSelectedBy" placeholder="Min" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
             <input type="number" id="maxSelectedBy" placeholder="Max" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
         </div>
-    
+
         <div>
             <label for="statusFilter" style="display: block; font-weight: bold; margin-bottom: 5px;">Status:</label>
             <select id="statusFilter" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd;">
@@ -85,6 +85,12 @@
             <input type="number" id="minFDR" placeholder="Min" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
             <input type="number" id="maxFDR" placeholder="Max" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
         </div>
+
+        <div>
+            <label for="minFCPS" style="display: block; font-weight: bold; margin-bottom: 5px;">FCPS:</label>
+            <input type="number" id="minFCPS" placeholder="Min" step="0.01" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
+            <input type="number" id="maxFCPS" placeholder="Max" step="0.01" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; width: 80px;">
+        </div>
     </div>
 
     <!-- Players Table -->
@@ -101,6 +107,7 @@
                     <th style="padding: 10px; text-align: left;">Selected By (%)</th>
                     <th style="padding: 10px; text-align: left;">Status</th>
                     <th style="padding: 10px; text-align: left;">Next 3 FDR</th>
+                    <th style="padding: 10px; text-align: left;">FCPS</th> <!-- New FCPS Column -->
                 </tr>
             </thead>
             <tbody>

@@ -92,6 +92,9 @@ def calculate_fcps(dataframe, weights=None, max_values=None):
         weights["ict_index_weight"] * dataframe["ict_index_norm"]
     )
 
+    # Round FCPS to 2 decimal places
+    dataframe["fcps"] = dataframe["fcps"].round(2)
+
     # Drop intermediate normalization columns for cleaner output
     dataframe.drop(
         ["total_points_norm", "form_norm", "fdr_norm", "ict_index_norm"],
@@ -388,46 +391,11 @@ def players_data():
     # Fetch global normalization values
     normalization_values = get_normalization_values()
 
-    # Check if player_id is provided
-    player_id = request.args.get("player_id", type=int)
-    if player_id:
-        # Return data for a single player
-        player = players.get(player_id)
-        if player:
-            team_id = player["team"]
-            next_3_fdr = calculate_next_3_fdr(team_id, team_fixtures, current_gameweek)
+    # Parse query parameters for filtering
+    min_fcps = request.args.get("min_fcps", default=None, type=float)
+    max_fcps = request.args.get("max_fcps", default=None, type=float)
 
-            # Prepare the player's data as a DataFrame
-            single_player_data = [{
-                "total_points": player["total_points"],
-                "form": float(player["form"]),
-                "next_3_fdr": next_3_fdr,
-                "ict_index": float(player["ict_index"]),
-            }]
-            single_player_df = pd.DataFrame(single_player_data)
-
-            # Calculate FCPS for the single player using global normalization values
-            single_player_df = calculate_fcps(single_player_df, max_values=normalization_values)
-
-            # Extract the FCPS value
-            fcps = single_player_df.iloc[0]["fcps"]
-
-            return jsonify({
-                "name": f"{player['first_name']} {player['second_name']}",
-                "photo": f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{player['code']}.png",
-                "team": team_abbreviations.get(team_id, "UNK"),
-                "position": POSITION_MAP[player["element_type"]],
-                "price": player["now_cost"] / 10,
-                "total_points": player["total_points"],
-                "form": player["form"],
-                "selected_by_percent": player["selected_by_percent"],
-                "status": STATUS_MAP.get(player["status"], "Unknown"),
-                "next_3_fdr": next_3_fdr,
-                "fcps": fcps,  # Add FCPS to the response
-            })
-        return jsonify({"error": "Player not found"}), 404
-
-    # Return data for all players
+    # Calculate FCPS for all players
     player_list = []
     for player in players.values():
         team_id = player["team"]
@@ -458,6 +426,12 @@ def players_data():
 
     # Calculate FCPS and include it in the response
     df = calculate_fcps(df, max_values=normalization_values)
+
+    # Apply min/max FCPS filters
+    if min_fcps is not None:
+        df = df[df["fcps"] >= min_fcps]
+    if max_fcps is not None:
+        df = df[df["fcps"] <= max_fcps]
 
     # Convert DataFrame back to list of dicts for JSON response
     player_list_with_fcps = df.to_dict(orient="records")
