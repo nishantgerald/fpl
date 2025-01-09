@@ -58,9 +58,9 @@ def calculate_fcps(dataframe, weights=None, max_values=None):
     if weights is None:
         weights = {
             "total_points_weight": 0.2,
-            "form_weight": 0.25,
+            "form_weight": 0.4,
             "fdr_weight": 0.25,
-            "ict_index_weight": 0.3,
+            "ict_index_weight": 0.15,
         }
 
     # Ensure numeric columns
@@ -93,7 +93,7 @@ def calculate_fcps(dataframe, weights=None, max_values=None):
     )
 
     # Round FCPS to 2 decimal places
-    dataframe["fcps"] = dataframe["fcps"].round(2)
+    dataframe["fcps"] = dataframe["fcps"].round(3) * 1000
 
     # Drop intermediate normalization columns for cleaner output
     dataframe.drop(
