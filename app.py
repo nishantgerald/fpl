@@ -252,9 +252,9 @@ def get_player_dataframe(player_ids, starting_eleven_ids):
         # Calculate FCPS using global normalization values
         df = calculate_fcps(df, max_values=normalization_values)
 
-        print("-----")
-        print("User's Team")
-        print(df)
+        # print("-----")
+        # print("User's Team")
+        # print(df)
         return df
     else:
         print("No player data fetched for the given IDs.")
@@ -345,9 +345,9 @@ def print_top_players():
     # Combine all top players into a single DataFrame
     top_players_df = pd.concat([top_gkps, top_defs, top_mids, top_fwds])
 
-    print("-----")
-    print("Top Players")
-    print(top_players_df)
+    # print("-----")
+    # print("Top Players")
+    # print(top_players_df)
 
     return top_players_df
 
