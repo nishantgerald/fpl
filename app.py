@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 
-from flask import Flask, render_template, jsonify, request
+import os
 import requests
 import pandas as pd
-import os
+from flask import Flask, render_template, jsonify, request
 
+app = Flask(__name__)
 pd.set_option("display.max_rows", None)
 
+# ------------------- Globals & Mappings -------------------
 cached_data = None  # Global variable to store FPL data
-app = Flask(__name__)
 
-# Status and Position mappings
 STATUS_MAP = {
     "a": "Available",
     "i": "Injured",
@@ -18,6 +18,7 @@ STATUS_MAP = {
     "s": "Suspended",
     "u": "Unavailable",
 }
+
 POSITION_MAP = {
     1: "GKP",
     2: "DEF",
@@ -26,34 +27,93 @@ POSITION_MAP = {
     5: "MGR",
 }
 
+# ------------------- Fetch & Cache Data -------------------
+def fetch_player_data():
+    """
+    Fetch overall bootstrap data from FPL API.
+    """
+    url = "https://fantasy.premierleague.com/api/bootstrap-static/"
+    response = requests.get(url)
+    return response.json() if response.status_code == 200 else None
+
 def get_cached_data():
+    """
+    Use a global cache so we don't repeatedly fetch the entire data set
+    on every request. If cached_data is None, fetch from the API.
+    """
     global cached_data
     if cached_data is None:
         print("Fetching data from FPL API...")
         cached_data = fetch_player_data()
     return cached_data
 
+def fetch_fixtures_data():
+    """
+    Fetch all fixtures from the FPL API.
+    Returns fixture list if success, else None.
+    """
+    url = "https://fantasy.premierleague.com/api/fixtures/"
+    response = requests.get(url)
+    if response.status_code != 200:
+        return None
+    return response.json()
+
+def fetch_current_gameweek():
+    """
+    Identify the current gameweek from the FPL 'events' data.
+    """
+    data = fetch_player_data()
+    if not data:
+        return None
+    return next(event["id"] for event in data["events"] if event["is_current"])
+
+def build_team_fixtures(fixtures, current_gameweek):
+    """
+    Build a dictionary of upcoming fixtures keyed by team ID,
+    each containing a list of its fixture difficulties and gameweeks.
+    """
+    team_fixtures = {}
+    for fixture in fixtures:
+        if fixture["event"] is None or fixture["event"] < current_gameweek:
+            continue
+        team_h = fixture["team_h"]
+        team_a = fixture["team_a"]
+        if team_h not in team_fixtures:
+            team_fixtures[team_h] = []
+        if team_a not in team_fixtures:
+            team_fixtures[team_a] = []
+        team_fixtures[team_h].append({
+            "difficulty": fixture["team_h_difficulty"],
+            "gameweek": fixture["event"]
+        })
+        team_fixtures[team_a].append({
+            "difficulty": fixture["team_a_difficulty"],
+            "gameweek": fixture["event"]
+        })
+    return team_fixtures
+
+# ------------------- Normalization & Scoring -------------------
 def get_normalization_values():
     """
-    Fetch global max values for normalization across all players.
+    Fetch global maximum values for normalization across all players
+    (total_points, form, next_3_fdr, ict_index).
     """
     data = get_cached_data()
     if not data:
         return None
 
     players = data["elements"]
-    max_values = {
+    return {
         "total_points": max(p["total_points"] for p in players),
         "form": max(float(p["form"]) for p in players),
         "next_3_fdr": 15,  # Hardcoded maximum for next 3 fixtures FDR
         "ict_index": max(float(p["ict_index"]) for p in players),
     }
-    return max_values
 
 def calculate_fcps(dataframe, weights=None, max_values=None):
     """
     Calculate FCPS (Fantasy Composite Player Score) for a given DataFrame.
-    If max_values is provided, it will use them for normalization; otherwise, 
+    If max_values is provided, it uses them for normalization; otherwise,
     it calculates normalization values dynamically from the DataFrame.
     """
     if weights is None:
@@ -64,16 +124,15 @@ def calculate_fcps(dataframe, weights=None, max_values=None):
             "ict_index_weight": 0.15,
         }
 
-    # Ensure numeric columns
     numeric_columns = ["total_points", "form", "next_3_fdr", "ict_index"]
     for col in numeric_columns:
         dataframe[col] = pd.to_numeric(dataframe[col], errors="coerce")  # Convert to numeric
 
-    # Handle missing data
+    # Fill missing data with 0
     if dataframe[numeric_columns].isnull().any().any():
         dataframe.fillna(0, inplace=True)
 
-    # Use provided max values for normalization or calculate them dynamically
+    # Use provided max values or calculate from dataframe
     if max_values:
         dataframe["total_points_norm"] = dataframe["total_points"] / max_values["total_points"]
         dataframe["form_norm"] = dataframe["form"] / max_values["form"]
@@ -85,148 +144,116 @@ def calculate_fcps(dataframe, weights=None, max_values=None):
         dataframe["fdr_norm"] = dataframe["next_3_fdr"] / dataframe["next_3_fdr"].max()
         dataframe["ict_index_norm"] = dataframe["ict_index"] / dataframe["ict_index"].max()
 
-    # Calculate FCPS
+    # Invert FDR because lower FDR is better (so we do 1 - normalized FDR)
     dataframe["fcps"] = (
-        weights["total_points_weight"] * dataframe["total_points_norm"] +
-        weights["form_weight"] * dataframe["form_norm"] +
-        weights["fdr_weight"] * (1 - dataframe["fdr_norm"]) +  # Invert FDR
-        weights["ict_index_weight"] * dataframe["ict_index_norm"]
+        weights["total_points_weight"] * dataframe["total_points_norm"]
+        + weights["form_weight"] * dataframe["form_norm"]
+        + weights["fdr_weight"] * (1 - dataframe["fdr_norm"])
+        + weights["ict_index_weight"] * dataframe["ict_index_norm"]
     )
 
-    # Round FCPS to 2 decimal places
-    dataframe["fcps"] = dataframe["fcps"].round(3) * 1000
+    # Scale & round
+    dataframe["fcps"] = (dataframe["fcps"].round(3) * 1000)
 
-    # Drop intermediate normalization columns for cleaner output
+    # Drop intermediate columns
     dataframe.drop(
         ["total_points_norm", "form_norm", "fdr_norm", "ict_index_norm"],
         axis=1,
         inplace=True
     )
-
     return dataframe
-
 
 def calculate_next_3_fdr(team_id, team_fixtures, current_gameweek):
     """
-    Calculates the sum of fixture difficulties for the next 3 fixtures of a team.
+    Sum fixture difficulties for the next 3 fixtures of a team.
     """
     future_fixtures = [
-        fixture for fixture in team_fixtures.get(team_id, [])
-        if fixture["gameweek"] > current_gameweek
+        f for f in team_fixtures.get(team_id, []) if f["gameweek"] > current_gameweek
     ]
     next_fixtures = sorted(future_fixtures, key=lambda x: x["gameweek"])[:3]
-    return sum(fixture["difficulty"] for fixture in next_fixtures)
+    return sum(fx["difficulty"] for fx in next_fixtures)
 
-# Fetch data from FPL API
-def fetch_player_data():
-    url = "https://fantasy.premierleague.com/api/bootstrap-static/"
-    response = requests.get(url)
-    return response.json() if response.status_code == 200 else None
-
-
-def fetch_teams():
-    url = "https://fantasy.premierleague.com/api/bootstrap-static/"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        return {team["id"]: team["name"] for team in data["teams"]}
-    return {}
-
-
+# ------------------- Picks & Organization -------------------
 def fetch_gameweek_picks(user_id, gameweek):
-    url = (
-        f"https://fantasy.premierleague.com/api/entry/{user_id}/event/{gameweek}/picks/"
-    )
+    """
+    Given an FPL user id and a gameweek, fetch the user's picks.
+    """
+    url = f"https://fantasy.premierleague.com/api/entry/{user_id}/event/{gameweek}/picks/"
     response = requests.get(url)
     return response.json() if response.status_code == 200 else None
-
-
-def fetch_current_gameweek():
-    data = fetch_player_data()
-    if not data:
-        return None
-    return next(event["id"] for event in data["events"] if event["is_current"])
-
 
 def organize_team(picks, players):
+    """
+    Return a dictionary of { position : [list of player dicts] } for the starting lineup,
+    and a separate bench list.
+    """
     lineup = {"GKP": [], "DEF": [], "MID": [], "FWD": []}
     bench = []
+
     for pick in picks:
         element_id = pick["element"]
         player = players.get(element_id, {})
         status = STATUS_MAP.get(player["status"], "Unknown")
+
         player_data = {
             "id": element_id,
             "name": f"{player.get('first_name', '')} {player.get('second_name', '')}",
-            "photo": f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{player['code']}.png",
+            "photo": (
+                f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{player['code']}.png"
+            ),
             "position": POSITION_MAP[player["element_type"]],
             "is_captain": pick["is_captain"],
             "is_vice_captain": pick["is_vice_captain"],
             "status": status,
             "status_class": (
-                "doubtful"
-                if status == "Doubtful"
+                "doubtful" if status == "Doubtful"
                 else (
-                    "injured"
-                    if status in ["Injured", "Suspended", "Unavailable"]
+                    "injured" if status in ["Injured", "Suspended", "Unavailable"]
                     else "available"
                 )
             ),
         }
+
+        # If multiplier > 0, it's part of the starting lineup
         if pick["multiplier"] > 0:
             lineup[player_data["position"]].append(player_data)
         else:
             bench.append(player_data)
+
     return lineup, bench
 
+# ------------------- DataFrame Builders -------------------
 def get_player_dataframe(player_ids, starting_eleven_ids):
     """
-    Fetches player data for a list of player IDs using cached data
-    and returns the data as a Pandas DataFrame, including FCPS,
-    sorted in descending order of FCPS.
+    Build a DataFrame of player data for the given player_ids, including FCPS,
+    and sort in descending order of FCPS. Distinguish who is in starting eleven.
     """
-    # Use cached data
     data = get_cached_data()
     if not data:
         print("Failed to fetch player data.")
         return pd.DataFrame()
 
-    # Fetch fixtures data
-    fixtures_response = requests.get("https://fantasy.premierleague.com/api/fixtures/")
-    if fixtures_response.status_code != 200:
+    # Fetch fixtures & current gameweek
+    fixtures = fetch_fixtures_data()
+    if fixtures is None:
         print("Failed to fetch fixture data.")
         return pd.DataFrame()
-    fixtures = fixtures_response.json()
 
-    # Determine current gameweek
     current_gameweek = fetch_current_gameweek()
     if not current_gameweek:
         print("Failed to fetch current gameweek.")
         return pd.DataFrame()
 
-    # Prepare mappings and necessary data
+    # Prepare data
     players = {p["id"]: p for p in data["elements"]}
     team_abbreviations = {team["id"]: team["short_name"] for team in data["teams"]}
-    team_fixtures = {}
-    for fixture in fixtures:
-        if fixture["event"] is None or fixture["event"] < current_gameweek:
-            continue
-        team_h = fixture["team_h"]
-        team_a = fixture["team_a"]
-        if team_h not in team_fixtures:
-            team_fixtures[team_h] = []
-        if team_a not in team_fixtures:
-            team_fixtures[team_a] = []
-        team_fixtures[team_h].append({"difficulty": fixture["team_h_difficulty"], "gameweek": fixture["event"]})
-        team_fixtures[team_a].append({"difficulty": fixture["team_a_difficulty"], "gameweek": fixture["event"]})
-
-    # Fetch global normalization values
+    team_fixtures = build_team_fixtures(fixtures, current_gameweek)
     normalization_values = get_normalization_values()
 
-    # Filter the data for the given player IDs
+    # Filter for the requested players
     filtered_players = []
-    for player_id in player_ids:
-        player = players.get(player_id)
+    for pid in player_ids:
+        player = players.get(pid)
         if player:
             team_id = player["team"]
             next_3_fdr = calculate_next_3_fdr(team_id, team_fixtures, current_gameweek)
@@ -242,173 +269,167 @@ def get_player_dataframe(player_ids, starting_eleven_ids):
                 "selected_by_percent": player["selected_by_percent"],
                 "status": STATUS_MAP.get(player["status"], "Unknown"),
                 "next_3_fdr": next_3_fdr,
-                "starting_eleven": player_id in starting_eleven_ids,
+                "starting_eleven": pid in starting_eleven_ids,
                 "ict_index": player["ict_index"],
             })
 
-    # Convert the filtered list into a DataFrame
-    if filtered_players:
-        df = pd.DataFrame(filtered_players)
-
-        # Calculate FCPS using global normalization values
-        df = calculate_fcps(df, max_values=normalization_values)
-
-        # print("-----")
-        # print("User's Team")
-        # print(df)
-        return df
-    else:
+    # Convert to DataFrame
+    if not filtered_players:
         print("No player data fetched for the given IDs.")
         return pd.DataFrame()
 
+    df = pd.DataFrame(filtered_players)
+    df = calculate_fcps(df, max_values=normalization_values)
+    return df
+
 def print_top_players():
     """
-    Calculates FCPS (Fantasy Composite Player Score) for all players, sorts by position and FCPS, 
-    and selects the top players for each position to form the top players DataFrame.
+    Calculate FCPS for all available players, sort them by FCPS descending,
+    and select top GKP, DEF, MID, FWD. Return combined DataFrame.
     """
-    # Use cached data
     data = get_cached_data()
     if not data:
         print("Failed to fetch player data.")
         return
 
-    # Fetch fixtures data
-    fixtures_response = requests.get("https://fantasy.premierleague.com/api/fixtures/")
-    if fixtures_response.status_code != 200:
+    fixtures = fetch_fixtures_data()
+    if fixtures is None:
         print("Failed to fetch fixture data.")
         return
-    fixtures = fixtures_response.json()
 
-    # Determine current gameweek
     current_gameweek = fetch_current_gameweek()
     if not current_gameweek:
         print("Failed to fetch current gameweek.")
         return
 
-    # Prepare data mappings
     players = {p["id"]: p for p in data["elements"]}
     team_abbreviations = {team["id"]: team["short_name"] for team in data["teams"]}
-    team_fixtures = {}
-    for fixture in fixtures:
-        if fixture["event"] is None or fixture["event"] < current_gameweek:
-            continue
-        team_h = fixture["team_h"]
-        team_a = fixture["team_a"]
-        if team_h not in team_fixtures:
-            team_fixtures[team_h] = []
-        if team_a not in team_fixtures:
-            team_fixtures[team_a] = []
-        team_fixtures[team_h].append({"difficulty": fixture["team_h_difficulty"], "gameweek": fixture["event"]})
-        team_fixtures[team_a].append({"difficulty": fixture["team_a_difficulty"], "gameweek": fixture["event"]})
-
-    # Fetch global normalization values
+    team_fixtures = build_team_fixtures(fixtures, current_gameweek)
     normalization_values = get_normalization_values()
 
-    # Calculate FCPS for all players
     player_list = []
-    for player in players.values():
-        if player["status"] != "a":  # Only consider available players
+    for p in players.values():
+        # Only consider 'Available' players in top players logic
+        if p["status"] != "a":
             continue
 
-        team_id = player["team"]
+        team_id = p["team"]
         next_3_fdr = calculate_next_3_fdr(team_id, team_fixtures, current_gameweek)
 
         player_list.append({
-            "id": player["id"],
-            "name": f"{player['first_name']} {player['second_name']}",
+            "id": p["id"],
+            "name": f"{p['first_name']} {p['second_name']}",
             "team": team_abbreviations.get(team_id, "UNK"),
-            "position": POSITION_MAP[player["element_type"]],
-            "price": player["now_cost"] / 10,
-            "total_points": player["total_points"],
-            "form": float(player["form"]),
+            "position": POSITION_MAP[p["element_type"]],
+            "price": p["now_cost"] / 10,
+            "total_points": p["total_points"],
+            "form": float(p["form"]),
             "next_3_fdr": next_3_fdr,
-            "ict_index": player["ict_index"],
+            "ict_index": p["ict_index"],
         })
 
-    # Convert the full list into a DataFrame
     df = pd.DataFrame(player_list)
-
-    # Ensure numeric conversion
     df["ict_index"] = pd.to_numeric(df["ict_index"], errors="coerce")
-
-    # Calculate FCPS using global normalization values
     df = calculate_fcps(df, max_values=normalization_values)
-
-    # Sort by FCPS
     df = df.sort_values(by="fcps", ascending=False)
 
-    # Filter top players for each position
+    # Filter top players by position
     top_gkps = df[df["position"] == "GKP"].head(5)
     top_defs = df[df["position"] == "DEF"].head(15)
     top_mids = df[df["position"] == "MID"].head(25)
     top_fwds = df[df["position"] == "FWD"].head(25)
 
-    # Combine all top players into a single DataFrame
-    top_players_df = pd.concat([top_gkps, top_defs, top_mids, top_fwds])
+    return pd.concat([top_gkps, top_defs, top_mids, top_fwds])
 
-    # print("-----")
-    # print("Top Players")
-    # print(top_players_df)
+# ------------------- Flask Routes -------------------
+@app.route("/")
+def home():
+    """
+    Default route: pulls a default user_id's picks, displays them with
+    the top players table for the current gameweek.
+    """
+    user_id = request.args.get("user_id", default=3022850, type=int)
+    gameweek = fetch_current_gameweek()
+    if not gameweek:
+        return "Failed to fetch current gameweek."
 
-    return top_players_df
+    data = get_cached_data()
+    if not data:
+        return "Failed to fetch player data."
+
+    players = {p["id"]: p for p in data["elements"]}
+    picks = fetch_gameweek_picks(user_id, gameweek)
+    if not picks:
+        return "Failed to fetch gameweek picks."
+
+    # Organize
+    lineup, bench = organize_team(picks["picks"], players)
+
+    # Extract player ids from lineup/bench
+    player_ids = [
+        p["id"] for position in lineup.values() for p in position
+    ] + [p["id"] for p in bench]
+    starting_eleven_ids = [
+        p["id"] for position in lineup.values() for p in position
+    ]
+
+    # Build DataFrame
+    user_players_df = get_player_dataframe(player_ids, starting_eleven_ids)
+    top_players_df = print_top_players()
+
+    # Render
+    return render_template(
+        "formation_with_bench.html",
+        starting_lineup=lineup,
+        bench=bench,
+        user_id=user_id,
+        user_players_df=user_players_df,
+        top_players_df=top_players_df
+    )
 
 @app.route("/players")
 def players_page():
+    """
+    Renders a page for searching players.
+    """
     return render_template("player_search.html")
 
 @app.route("/api/players", methods=["GET"])
 def players_data():
     """
-    API endpoint to return player data. Supports FCPS calculations and filtering.
-    If a player_id is provided, returns data for that specific player.
+    API endpoint to return players (with FCPS).
+    Query params:
+      - player_id: get one specific player
+      - min_fcps, max_fcps: filter by FCPS range
     """
     data = fetch_player_data()
     if not data:
         return jsonify({"error": "Failed to fetch player data"}), 500
 
-    # Fetch fixtures data
-    fixtures_response = requests.get("https://fantasy.premierleague.com/api/fixtures/")
-    if fixtures_response.status_code != 200:
+    fixtures = fetch_fixtures_data()
+    if fixtures is None:
         return jsonify({"error": "Failed to fetch fixture data"}), 500
-    fixtures = fixtures_response.json()
 
-    # Determine current gameweek
     current_gameweek = fetch_current_gameweek()
     if not current_gameweek:
         return jsonify({"error": "Failed to fetch current gameweek"}), 500
 
-    # Prepare data mappings
     team_abbreviations = {team["id"]: team["short_name"] for team in data["teams"]}
     players = {p["id"]: p for p in data["elements"]}
-    team_fixtures = {}
-    for fixture in fixtures:
-        if fixture["event"] is None or fixture["event"] < current_gameweek:
-            continue
-        team_h = fixture["team_h"]
-        team_a = fixture["team_a"]
-        if team_h not in team_fixtures:
-            team_fixtures[team_h] = []
-        if team_a not in team_fixtures:
-            team_fixtures[team_a] = []
-        team_fixtures[team_h].append({"difficulty": fixture["team_h_difficulty"], "gameweek": fixture["event"]})
-        team_fixtures[team_a].append({"difficulty": fixture["team_a_difficulty"], "gameweek": fixture["event"]})
-
-    # Fetch global normalization values for FCPS
+    team_fixtures = build_team_fixtures(fixtures, current_gameweek)
     normalization_values = get_normalization_values()
 
-    # Parse query parameters for filtering and specific player
     player_id = request.args.get("player_id", type=int)
     min_fcps = request.args.get("min_fcps", default=None, type=float)
     max_fcps = request.args.get("max_fcps", default=None, type=float)
 
-    # If player_id is provided, return data for that specific player
+    # If a single player_id is provided:
     if player_id:
         player = players.get(player_id)
         if player:
             team_id = player["team"]
             next_3_fdr = calculate_next_3_fdr(team_id, team_fixtures, current_gameweek)
-
-            player_data = [{
+            single_data = [{
                 "id": player["id"],
                 "name": f"{player['first_name']} {player['second_name']}",
                 "team": team_abbreviations.get(team_id, "UNK"),
@@ -422,129 +443,76 @@ def players_data():
                 "ict_index": player["ict_index"],
                 "photo": f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{player['code']}.png"
             }]
-
-            # Convert to DataFrame to calculate FCPS for the single player
-            df = pd.DataFrame(player_data)
+            df = pd.DataFrame(single_data)
             df = calculate_fcps(df, max_values=normalization_values)
-
-            # Convert back to list of dicts
             return jsonify({"data": df.to_dict(orient="records")})
         else:
             return jsonify({"error": "Player not found"}), 404
 
-    # If no player_id is provided, calculate data for all players
+    # Otherwise, return data for all players
     player_list = []
-    for player in players.values():
-        team_id = player["team"]
+    for pl in players.values():
+        team_id = pl["team"]
         next_3_fdr = calculate_next_3_fdr(team_id, team_fixtures, current_gameweek)
 
         player_list.append({
-            "id": player["id"],
-            "name": f"{player['first_name']} {player['second_name']}",
+            "id": pl["id"],
+            "name": f"{pl['first_name']} {pl['second_name']}",
             "team": team_abbreviations.get(team_id, "UNK"),
-            "position": POSITION_MAP[player["element_type"]],
-            "price": player["now_cost"] / 10,
-            "total_points": player["total_points"],
-            "form": player["form"],
-            "selected_by_percent": player["selected_by_percent"],
-            "status": STATUS_MAP.get(player["status"], "Unknown"),
+            "position": POSITION_MAP[pl["element_type"]],
+            "price": pl["now_cost"] / 10,
+            "total_points": pl["total_points"],
+            "form": pl["form"],
+            "selected_by_percent": pl["selected_by_percent"],
+            "status": STATUS_MAP.get(pl["status"], "Unknown"),
             "next_3_fdr": next_3_fdr,
-            "ict_index": player["ict_index"],
-            "photo": f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{player['code']}.png"
+            "ict_index": pl["ict_index"],
+            "photo": f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{pl['code']}.png"
         })
 
-    # Convert to DataFrame for FCPS calculation
     df = pd.DataFrame(player_list)
-
-    # Ensure numeric conversion
     numeric_columns = ["total_points", "form", "next_3_fdr", "ict_index"]
     for col in numeric_columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Calculate FCPS for all players
     df = calculate_fcps(df, max_values=normalization_values)
 
-    # Apply min/max FCPS filters
+    # FCPS Filters
     if min_fcps is not None:
         df = df[df["fcps"] >= min_fcps]
     if max_fcps is not None:
         df = df[df["fcps"] <= max_fcps]
 
-    # Convert DataFrame back to list of dicts for JSON response
-    player_list_with_fcps = df.to_dict(orient="records")
-
-    return jsonify({"data": player_list_with_fcps})
+    return jsonify({"data": df.to_dict(orient="records")})
 
 @app.route("/api/fixtures")
 def fixtures_data():
-    url = "https://fantasy.premierleague.com/api/fixtures/"
-    response = requests.get(url)
-    if response.status_code != 200:
+    """
+    API endpoint to return fixture data.
+    """
+    fixtures = fetch_fixtures_data()
+    if fixtures is None:
         return jsonify({"error": "Failed to fetch fixture data"}), 500
 
-    fixtures = response.json()
-
-    # Fetch team abbreviations from players data
     data = fetch_player_data()
     if not data:
         return jsonify({"error": "Failed to fetch player data for team abbreviations"}), 500
 
     team_abbreviations = {team["id"]: team["short_name"] for team in data["teams"]}
 
-    # Extract required data
-    fixture_list = [
-        {
+    fixture_list = []
+    for fixture in fixtures:
+        fixture_list.append({
             "gameweek": fixture["event"],
             "home_team": team_abbreviations.get(fixture["team_h"], "UNK"),
             "away_team": team_abbreviations.get(fixture["team_a"], "UNK"),
             "team_h_difficulty": fixture["team_h_difficulty"],
             "team_a_difficulty": fixture["team_a_difficulty"],
-        }
-        for fixture in fixtures
-    ]
+        })
 
     return jsonify(fixture_list)
 
-@app.route("/")
-def home():
-    user_id = request.args.get("user_id", default=3022850, type=int)  # Default USER_ID
-    gameweek = fetch_current_gameweek()
-    if not gameweek:
-        return "Failed to fetch current gameweek."
-
-    # Use cached data
-    data = get_cached_data()
-    if not data:
-        return "Failed to fetch player data."
-    
-    players = {p["id"]: p for p in data["elements"]}
-    picks = fetch_gameweek_picks(user_id, gameweek)
-    if not picks:
-        return "Failed to fetch gameweek picks."
-
-    # Organize starting lineup and bench
-    lineup, bench = organize_team(picks["picks"], players)
-
-    # Extract player IDs from lineup and bench
-    player_ids = [p["id"] for position in lineup.values() for p in position] + [p["id"] for p in bench]
-    starting_eleven_ids = [p["id"] for position in lineup.values() for p in position]
-
-    # Fetch player data as DataFrame
-    user_players_df=get_player_dataframe(player_ids, starting_eleven_ids)
-
-    # Print top players DataFrame
-    top_players_df=print_top_players()
-
-    # Render the template
-    return render_template(
-        "formation_with_bench.html",
-        starting_lineup=lineup,
-        bench=bench,
-        user_id=user_id,
-        user_players_df=user_players_df,
-        top_players_df=top_players_df
-    )
-
+# ------------------- Main Runner -------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5001))  # Default to 5001 if $PORT is not set
+    port = int(os.environ.get("PORT", 5001))  # Default to 5001 if not set
     app.run(host="0.0.0.0", port=port)
