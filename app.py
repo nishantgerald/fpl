@@ -4,6 +4,8 @@ import os
 import requests
 import pandas as pd
 from flask import Flask, render_template, jsonify, request
+from dotenv import load_dotenv
+from openai import OpenAI
 
 app = Flask(__name__)
 pd.set_option("display.max_rows", None)
@@ -91,6 +93,53 @@ def build_team_fixtures(fixtures, current_gameweek):
             "gameweek": fixture["event"]
         })
     return team_fixtures
+
+def get_trade_recommendations(user_players_df, top_players_df):
+    """
+    Generate trade recommendations for the user's fantasy team
+    using the GPT-4o-mini model.
+
+    Args:
+        user_players_df (pd.DataFrame): DataFrame containing the user's current team.
+        top_players_df (pd.DataFrame): DataFrame containing the top players for the gameweek.
+
+    Returns:
+        str: Response from GPT-4o-mini with trade recommendations.
+    """
+    # Load environment variables
+    load_dotenv()
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    
+    if not openai_api_key:
+        raise ValueError("OPENAI_API_KEY not found in the .env file.")
+
+    # Initialize the OpenAI client
+    client = OpenAI(api_key=openai_api_key)
+
+    # Prepare the prompt
+    prompt = (
+        f"""
+        You are an expert fantasy premier league analyst. You will give the user the best transfer recommendations based on their current team, 
+        and the top players for the upcoming weeks. Take into account all their stats including FCPS (fantasy composite player score = a composite 
+        score that takes into account the difficulty rating for the next 3 games, the form, total score, and ICT index) and other stats. The user's 
+        team is {user_players_df.to_dict(orient='records')} and the top players are {top_players_df.to_dict(orient='records')}. Give the user the best 
+        trade recommendations for this gameweek. When considering trades, consider the trade out and trade in values to ensure that the trade is actually feasible in cost.
+        """
+    )
+
+    # Make the API call
+    try:
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        # Extract and return the response
+        return completion.choices[0].message.content
+    except Exception as e:
+        return f"Error generating trade recommendations: {str(e)}"
 
 # ------------------- Normalization & Scoring -------------------
 def get_normalization_values():
