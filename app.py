@@ -23,6 +23,7 @@ POSITION_MAP = {
     2: "DEF",
     3: "MID",
     4: "FWD",
+    5: "MGR",
 }
 
 def get_cached_data():
