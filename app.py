@@ -457,8 +457,16 @@ def print_top_players():
 @app.route("/")
 def home():
     """
-    Default route: pulls a default user_id's picks, displays them with
-    the top players table for the current gameweek.
+    Redirect root to the Flutter web app.
+    """
+    from flask import redirect
+    return redirect("/app/", code=302)
+
+
+@app.route("/legacy")
+def home_legacy():
+    """
+    Old Flask HTML interface (kept for reference).
     """
     user_id = request.args.get("user_id", default=3022850, type=int)
     gameweek = fetch_current_gameweek()
