@@ -311,7 +311,7 @@ def organize_team(picks, players):
             "id": element_id,
             "name": f"{player.get('first_name', '')} {player.get('second_name', '')}",
             "photo": (
-                f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{player['code']}.png"
+                f"{request.host_url}api/photo/{player['code']}"
             ),
             "position": POSITION_MAP[player["element_type"]],
             "is_captain": pick["is_captain"],
@@ -561,7 +561,7 @@ def players_data():
                 "status": STATUS_MAP.get(player["status"], "Unknown"),
                 "next_3_fdr": next_3_fdr,
                 "ict_index": player["ict_index"],
-                "photo": f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{player['code']}.png"
+                "photo": f"{request.host_url}api/photo/{player['code']}"
             }]
             df = pd.DataFrame(single_data)
             df = calculate_fcps(df, max_values=normalization_values)
@@ -587,7 +587,7 @@ def players_data():
             "status": STATUS_MAP.get(pl["status"], "Unknown"),
             "next_3_fdr": next_3_fdr,
             "ict_index": pl["ict_index"],
-            "photo": f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{pl['code']}.png"
+            "photo": f"{request.host_url}api/photo/{pl['code']}"
         })
 
     df = pd.DataFrame(player_list)
@@ -631,6 +631,31 @@ def fixtures_data():
         })
 
     return jsonify(fixture_list)
+
+_photo_cache = {}  # in-memory cache: code -> bytes
+
+@app.route("/api/photo/<int:code>")
+def player_photo(code):
+    """
+    Proxy player photos from the PL CDN through our domain.
+    This bypasses Safari ITP and other cross-origin restrictions on the client side.
+    Images are cached in memory after the first fetch.
+    """
+    from flask import Response
+    if code in _photo_cache:
+        return Response(_photo_cache[code], mimetype="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+    try:
+        url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{code}.png"
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            _photo_cache[code] = r.content
+            return Response(r.content, mimetype="image/png",
+                            headers={"Cache-Control": "public, max-age=86400"})
+    except Exception:
+        pass
+    return "", 404
+
 
 @app.route("/api/entry/<int:entry_id>")
 def get_entry(entry_id):
