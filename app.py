@@ -4,10 +4,12 @@ import os
 import requests
 import pandas as pd
 from flask import Flask, render_template, jsonify, request
+from flask_cors import CORS
 from dotenv import load_dotenv
 from openai import OpenAI
 
 app = Flask(__name__)
+CORS(app)  # Allow Flutter web app to call this API
 pd.set_option("display.max_rows", None)
 
 # ------------------- Globals & Mappings -------------------
@@ -123,13 +125,74 @@ def get_trade_recommendations(user_players_df, top_players_df):
         and the top players for the upcoming weeks. Take into account all their stats including FCPS (fantasy composite player score = a composite 
         score that takes into account the difficulty rating for the next 3 games, the form, total score, and ICT index) and other stats. The user's 
         team is {user_players_df.to_dict(orient='records')} and the top players are {top_players_df.to_dict(orient='records')}. Give the user the best 
-        trade recommendations for this gameweek. When considering trades, consider the trade out and trade in values to ensure that the trade is actually feasible in cost.
+        trade recommendations for this gameweek.
+        
+        When considering trades, consider:
+        - Max number of players from the same team can only be 3
+        - Never suggest trade IN if the player is already in the user's current team
+        - Never suggest trade OUT if the player is not in the user's current team
+        - the trade out and trade in values to ensure that the trade is actually feasible in cost.
+        
+        Your response should be structured as follows (with sample data):
+            # Fantasy Premier League Transfer Recommendations
+            1. Goalkeeper
+            * Out: Matz Sels (GKP, NFO)
+            Price: 5.0
+            Reason: While he has decent form and FCPS, there are other GKP options with lower prices and potential better returns.
+            * In: Dean Henderson (GKP, CRY)
+
+                Price: 4.5
+                Total Points: 79
+                Form: 4.8
+                Next 3 FDR: 7
+                FCPS: 426.0
+                ICT Index: 51.6
+            ---
+            2. Defender
+            * Out: ...
+            Price: 6.4
+            Reason: ...
+            * In: Trent Alexander-Arnold (DEF, LIV)
+            ...
+            ...
+            ...
+            ---
+            3. Midfielder
+            * Out: ...
+            Price: 5.1
+            Reason: ...
+            * In: Anthony Gordon (MID, NEW)
+            ...
+            ...
+            ...
+            ---
+            4. Forward
+            * Out: ...
+            Price: 9.5
+            Reason: ...
+            * In: ...
+            ...
+            ...
+            ...
+            ---
+            ### Summary of Recommendations
+            Out Player	In Player	Position	Price Change	Notes
+            Matz Sels (5.0)	Dean Henderson (4.5)	GKP	-0.5	Solid alternative with potential value.
+            ...
+            ...
+            ...
+
+            ## Conclusion
+            Consider the suggested transfers to strengthen your lineup, which will not only save cost but also improve potential points from upcoming fixtures. Make sure to monitor injuries and form, as this can influence your strategy leading up to gameweek deadlines.
+
+        Format your response in markdown. Use tables, headers, and bullet points.
         """
     )
 
     # Make the API call
     try:
         completion = client.chat.completions.create(
+            # model="gpt-4o-mini",
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
@@ -560,6 +623,128 @@ def fixtures_data():
         })
 
     return jsonify(fixture_list)
+
+@app.route("/api/team")
+def team_data():
+    """
+    JSON API for the Flutter app: returns the user's current team
+    (formation + bench) with full player stats and FCPS scores.
+    """
+    user_id = request.args.get("user_id", default=3022850, type=int)
+    gameweek = fetch_current_gameweek()
+    if not gameweek:
+        return jsonify({"error": "Failed to fetch current gameweek"}), 500
+
+    data = get_cached_data()
+    if not data:
+        return jsonify({"error": "Failed to fetch player data"}), 500
+
+    players = {p["id"]: p for p in data["elements"]}
+    picks = fetch_gameweek_picks(user_id, gameweek)
+    if not picks:
+        return jsonify({"error": "Failed to fetch gameweek picks. Check the user ID."}), 404
+
+    # Organise into lineup/bench
+    lineup, bench = organize_team(picks["picks"], players)
+
+    # Get all player IDs for FCPS calculation
+    starting_eleven_ids = [p["id"] for pos in lineup.values() for p in pos]
+    bench_ids = [p["id"] for p in bench]
+    all_ids = starting_eleven_ids + bench_ids
+
+    # Build DataFrame with FCPS
+    df = get_player_dataframe(all_ids, starting_eleven_ids)
+    fcps_map = {}
+    if not df.empty:
+        fcps_map = dict(zip(df["id"], df["fcps"]))
+
+    def enrich(player_data):
+        pid = player_data["id"]
+        raw = players.get(pid, {})
+        return {
+            **player_data,
+            "price": raw.get("now_cost", 0) / 10,
+            "total_points": raw.get("total_points", 0),
+            "form": float(raw.get("form", 0)),
+            "selected_by_percent": float(raw.get("selected_by_percent", 0)),
+            "ict_index": float(raw.get("ict_index", 0)),
+            "team": next(
+                (t["short_name"] for t in data["teams"] if t["id"] == raw.get("team")),
+                "UNK",
+            ),
+            "fcps": round(fcps_map.get(pid, 0), 1),
+        }
+
+    enriched_lineup = {
+        pos: [enrich(p) for p in players_list]
+        for pos, players_list in lineup.items()
+    }
+    enriched_bench = [enrich(p) for p in bench]
+
+    return jsonify({
+        "gameweek": gameweek,
+        "user_id": user_id,
+        "lineup": enriched_lineup,
+        "bench": enriched_bench,
+    })
+
+
+@app.route("/trade_recommendations", methods=["GET", "POST"])
+def trade_recommendations():
+    """
+    Route to display trade recommendations for the user's fantasy team.
+    """
+    if request.method == "POST":
+        try:
+            # Fetch cached data and top players
+            data = get_cached_data()
+            if not data:
+                return jsonify({"error": "Failed to fetch player data"}), 500
+
+            top_players_df = print_top_players()
+            user_id = request.form.get("user_id", 3022850)  # Default user ID if not provided
+            gameweek = fetch_current_gameweek()
+            if not gameweek:
+                return jsonify({"error": "Failed to fetch current gameweek"}), 500
+
+            picks = fetch_gameweek_picks(user_id, gameweek)
+            if not picks:
+                return jsonify({"error": "Failed to fetch gameweek picks"}), 500
+
+            # Extract player data for the user's team
+            player_ids = [pick["element"] for pick in picks["picks"]]
+            starting_eleven_ids = [pick["element"] for pick in picks["picks"] if pick["multiplier"] > 0]
+            user_players_df = get_player_dataframe(player_ids, starting_eleven_ids)
+
+            # Call the recommendation function
+            recommendation = get_trade_recommendations(user_players_df, top_players_df)
+
+            # Return the recommendation as JSON
+            return jsonify({"recommendation": recommendation})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # Render the HTML template for GET request
+    return render_template("trade_recommendations.html")
+
+
+# ------------------- Flutter App Serving -------------------
+import os as _os
+from flask import send_from_directory as _send_from_directory
+
+FLUTTER_BUILD_DIR = _os.path.join(_os.path.dirname(__file__), "flutter_web")
+
+@app.route("/app")
+@app.route("/app/")
+def flutter_index():
+    """Serve the Flutter web app index page."""
+    return _send_from_directory(FLUTTER_BUILD_DIR, "index.html")
+
+@app.route("/app/<path:filename>")
+def flutter_static(filename):
+    """Serve Flutter web static assets."""
+    return _send_from_directory(FLUTTER_BUILD_DIR, filename)
+
 
 # ------------------- Main Runner -------------------
 if __name__ == "__main__":
