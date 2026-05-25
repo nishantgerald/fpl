@@ -3,3 +3,5 @@ Flask-CORS==4.0.0
 pandas==2.2.3
 Requests==2.32.3
 gunicorn==23.0.0
+openai==1.84.0
+python-dotenv==1.0.0

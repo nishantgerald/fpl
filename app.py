@@ -280,7 +280,7 @@ def calculate_next_3_fdr(team_id, team_fixtures, current_gameweek):
     Sum fixture difficulties for the next 3 fixtures of a team.
     """
     future_fixtures = [
-        f for f in team_fixtures.get(team_id, []) if f["gameweek"] > current_gameweek
+        f for f in team_fixtures.get(team_id, []) if f["gameweek"] >= current_gameweek
     ]
     next_fixtures = sorted(future_fixtures, key=lambda x: x["gameweek"])[:3]
     return sum(fx["difficulty"] for fx in next_fixtures)
@@ -311,7 +311,7 @@ def organize_team(picks, players):
             "id": element_id,
             "name": f"{player.get('first_name', '')} {player.get('second_name', '')}",
             "photo": (
-                f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{player['code']}.png"
+                f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{player['code']}.png"
             ),
             "position": POSITION_MAP[player["element_type"]],
             "is_captain": pick["is_captain"],
@@ -553,7 +553,7 @@ def players_data():
                 "status": STATUS_MAP.get(player["status"], "Unknown"),
                 "next_3_fdr": next_3_fdr,
                 "ict_index": player["ict_index"],
-                "photo": f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{player['code']}.png"
+                "photo": f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{player['code']}.png"
             }]
             df = pd.DataFrame(single_data)
             df = calculate_fcps(df, max_values=normalization_values)
@@ -579,7 +579,7 @@ def players_data():
             "status": STATUS_MAP.get(pl["status"], "Unknown"),
             "next_3_fdr": next_3_fdr,
             "ict_index": pl["ict_index"],
-            "photo": f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{pl['code']}.png"
+            "photo": f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{pl['code']}.png"
         })
 
     df = pd.DataFrame(player_list)
@@ -624,6 +624,33 @@ def fixtures_data():
 
     return jsonify(fixture_list)
 
+@app.route("/api/entry/<int:entry_id>")
+def get_entry(entry_id):
+    """
+    Proxy the FPL entry endpoint so Flutter can look up a manager's
+    name/team without hitting FPL directly (avoids CORS in web builds).
+    """
+    try:
+        url = f"https://fantasy.premierleague.com/api/entry/{entry_id}/"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 404:
+            return jsonify({"error": "Entry not found"}), 404
+        if resp.status_code != 200:
+            return jsonify({"error": f"FPL API returned {resp.status_code}"}), 502
+        data = resp.json()
+        return jsonify({
+            "id": data["id"],
+            "manager_name": f"{data['player_first_name']} {data['player_last_name']}",
+            "team_name": data.get("name", ""),
+            "region": data.get("player_region_name", ""),
+            "overall_points": data.get("summary_overall_points", 0),
+            "overall_rank": data.get("summary_overall_rank", 0),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/team")
 def team_data():
     """
@@ -655,8 +682,10 @@ def team_data():
     # Build DataFrame with FCPS
     df = get_player_dataframe(all_ids, starting_eleven_ids)
     fcps_map = {}
+    next_3_fdr_map = {}
     if not df.empty:
         fcps_map = dict(zip(df["id"], df["fcps"]))
+        next_3_fdr_map = dict(zip(df["id"], df["next_3_fdr"]))
 
     def enrich(player_data):
         pid = player_data["id"]
@@ -668,6 +697,7 @@ def team_data():
             "form": float(raw.get("form", 0)),
             "selected_by_percent": float(raw.get("selected_by_percent", 0)),
             "ict_index": float(raw.get("ict_index", 0)),
+            "next_3_fdr": int(next_3_fdr_map.get(pid, 0)),
             "team": next(
                 (t["short_name"] for t in data["teams"] if t["id"] == raw.get("team")),
                 "UNK",
