@@ -69,7 +69,32 @@ def fetch_current_gameweek():
     data = fetch_player_data()
     if not data:
         return None
-    return next(event["id"] for event in data["events"] if event["is_current"])
+    events = data["events"]
+    # Between seasons and before GW1 no event is current, so fall back to the
+    # upcoming one.
+    return next(
+        (e["id"] for e in events if e["is_current"]),
+        next((e["id"] for e in events if e["is_next"]), 1),
+    )
+
+def get_season_state():
+    """
+    Describe where we are in the season. Before the GW1 deadline no event is
+    current and FPL serves no picks for any entry, so callers need to
+    distinguish "not started yet" from a genuine lookup failure.
+    """
+    data = fetch_player_data()
+    if not data:
+        return None
+    events = data["events"]
+    current = next((e for e in events if e["is_current"]), None)
+    upcoming = current or next((e for e in events if e["is_next"]), events[0])
+    return {
+        "started": current is not None,
+        "gameweek": upcoming["id"],
+        "gameweek_name": upcoming["name"],
+        "deadline": upcoming["deadline_time"],
+    }
 
 def build_team_fixtures(fixtures, current_gameweek):
     """
@@ -244,17 +269,20 @@ def calculate_fcps(dataframe, weights=None, max_values=None):
     if dataframe[numeric_columns].isnull().any().any():
         dataframe.fillna(0, inplace=True)
 
-    # Use provided max values or calculate from dataframe
+    # Preseason every player has 0 points and 0 form, so guard the divisor —
+    # a 0 max means every value is 0 and the normalized term is 0 either way.
+    def safe_max(value):
+        return value if value and value > 0 else 1
+
     if max_values:
-        dataframe["total_points_norm"] = dataframe["total_points"] / max_values["total_points"]
-        dataframe["form_norm"] = dataframe["form"] / max_values["form"]
-        dataframe["fdr_norm"] = dataframe["next_3_fdr"] / max_values["next_3_fdr"]
-        dataframe["ict_index_norm"] = dataframe["ict_index"] / max_values["ict_index"]
+        divisors = {col: safe_max(max_values[col]) for col in numeric_columns}
     else:
-        dataframe["total_points_norm"] = dataframe["total_points"] / dataframe["total_points"].max()
-        dataframe["form_norm"] = dataframe["form"] / dataframe["form"].max()
-        dataframe["fdr_norm"] = dataframe["next_3_fdr"] / dataframe["next_3_fdr"].max()
-        dataframe["ict_index_norm"] = dataframe["ict_index"] / dataframe["ict_index"].max()
+        divisors = {col: safe_max(dataframe[col].max()) for col in numeric_columns}
+
+    dataframe["total_points_norm"] = dataframe["total_points"] / divisors["total_points"]
+    dataframe["form_norm"] = dataframe["form"] / divisors["form"]
+    dataframe["fdr_norm"] = dataframe["next_3_fdr"] / divisors["next_3_fdr"]
+    dataframe["ict_index_norm"] = dataframe["ict_index"] / divisors["ict_index"]
 
     # Invert FDR because lower FDR is better (so we do 1 - normalized FDR)
     dataframe["fcps"] = (
@@ -657,6 +685,16 @@ def player_photo(code):
     return "", 404
 
 
+def entry_exists(entry_id):
+    """
+    Whether an FPL entry resolves this season. Entry IDs are reissued each
+    season, so an ID saved last year stops resolving.
+    """
+    url = f"https://fantasy.premierleague.com/api/entry/{entry_id}/"
+    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+    return resp.status_code != 404
+
+
 @app.route("/api/entry/<int:entry_id>")
 def get_entry(entry_id):
     """
@@ -668,7 +706,7 @@ def get_entry(entry_id):
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 404:
-            return jsonify({"error": "Entry not found"}), 404
+            return jsonify({"code": "entry_not_found", "error": "Entry not found"}), 404
         if resp.status_code != 200:
             return jsonify({"error": f"FPL API returned {resp.status_code}"}), 502
         data = resp.json()
@@ -691,18 +729,37 @@ def team_data():
     (formation + bench) with full player stats and FCPS scores.
     """
     user_id = request.args.get("user_id", default=3022850, type=int)
-    gameweek = fetch_current_gameweek()
-    if not gameweek:
+    season = get_season_state()
+    if not season:
         return jsonify({"error": "Failed to fetch current gameweek"}), 500
+
+    if not season["started"]:
+        # No picks exist for anyone yet, so a stale ID would otherwise stay
+        # hidden until the deadline passes. Surface it now.
+        if not entry_exists(user_id):
+            return jsonify({
+                "code": "entry_not_found",
+                "error": f"No FPL team found with ID {user_id} this season.",
+            }), 404
+        return jsonify({
+            "code": "season_not_started",
+            "error": "The season hasn't kicked off yet.",
+            "gameweek": season["gameweek"],
+            "gameweek_name": season["gameweek_name"],
+            "deadline": season["deadline"],
+        }), 503
 
     data = get_cached_data()
     if not data:
         return jsonify({"error": "Failed to fetch player data"}), 500
 
     players = {p["id"]: p for p in data["elements"]}
-    picks = fetch_gameweek_picks(user_id, gameweek)
+    picks = fetch_gameweek_picks(user_id, season["gameweek"])
     if not picks:
-        return jsonify({"error": "Failed to fetch gameweek picks. Check the user ID."}), 404
+        return jsonify({
+            "code": "entry_not_found",
+            "error": "Failed to fetch gameweek picks. Check the user ID.",
+        }), 404
 
     # Organise into lineup/bench
     lineup, bench = organize_team(picks["picks"], players)
@@ -745,7 +802,7 @@ def team_data():
     enriched_bench = [enrich(p) for p in bench]
 
     return jsonify({
-        "gameweek": gameweek,
+        "gameweek": season["gameweek"],
         "user_id": user_id,
         "lineup": enriched_lineup,
         "bench": enriched_bench,
