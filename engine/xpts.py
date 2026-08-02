@@ -1,0 +1,492 @@
+"""Expected points (xPts) — the projection that replaces FCPS.
+
+FCPS was a unitless 0-1000 blend of total points, form, a 3-fixture FDR sum and
+ICT. It had no minutes term, normalised goalkeepers against Salah-class ceilings,
+and divided FDR by a hard-coded 15 — so a *blank* gameweek improved a player's
+score. Most importantly it wasn't in points, so it could never answer the only
+question that matters: "is this transfer worth a -4?"
+
+This module answers in points. For player ``p`` in gameweek ``g``, summed over
+each fixture the player's team actually plays in ``g`` (zero for a blank, two for
+a double)::
+
+    xPts = availability x SUM_fixtures [ appearance + goals + assists
+                                       + clean_sheet + conceded + saves
+                                       + defcon + bonus + cards ]
+
+Every term is returned alongside the total, so the UI can show a waterfall and
+the tests can assert the total *is* the sum of its parts rather than a number
+with a story attached.
+
+Pure: bootstrap and fixture dicts in, numbers out. No I/O, no clock.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Mapping, Sequence
+
+from .rules import POSITIONS, UNAVAILABLE_STATUSES, position_of
+
+# Points per goal by position, and per clean sheet by position.
+GOAL_POINTS = {"GKP": 6, "DEF": 6, "MID": 5, "FWD": 4}
+CLEAN_SHEET_POINTS = {"GKP": 4, "DEF": 4, "MID": 1, "FWD": 0}
+ASSIST_POINTS = 3
+
+# Defensive-contribution thresholds (2 pts on reaching them).
+DEFCON_THRESHOLD = {"DEF": 10, "MID": 12, "FWD": 12, "GKP": 0}
+DEFCON_POINTS = 2
+
+# How much weight FPL's own ep_next carries in the immediate gameweek. Our model
+# is better over a horizon; ep_next is a useful anchor when our inputs are thin.
+EP_NEXT_WEIGHT = 0.35
+EP_NEXT_WEIGHT_EARLY = 0.75
+EARLY_SEASON_GAMES = 3
+
+# Fixture multipliers are clamped so one extreme strength rating can't dominate.
+FIXTURE_MULT_MIN = 0.6
+FIXTURE_MULT_MAX = 1.6
+HOME_ATTACK_BONUS = 1.08
+HOME_DEFENCE_BONUS = 0.94
+
+# A knock this week says little about four weeks out.
+AVAILABILITY_RECOVERY = 0.35
+
+# Bonus points regress hard; a player's season bonus rate over-fits small samples.
+BONUS_SHRINK = 0.85
+
+# Default assumption for a doubtful player with no published percentage.
+DEFAULT_DOUBT_CHANCE = 0.5
+
+
+def _f(value, default: float = 0.0) -> float:
+    """Coerce an FPL field to float. Many are strings; some are None."""
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def build_fixture_index(
+    fixtures: Sequence[Mapping],
+    from_gameweek: int,
+) -> dict[int, dict[int, list[dict]]]:
+    """Index upcoming fixtures as ``team_id -> gameweek -> [fixture, ...]``.
+
+    A list per gameweek is what makes blanks and doubles fall out correctly: a
+    blank is an empty list (or a missing key), a double has two entries. The old
+    ``next_3_fdr`` sum could represent neither.
+    """
+    index: dict[int, dict[int, list[dict]]] = {}
+    for fx in fixtures:
+        event = fx.get("event")
+        if event is None or int(event) < from_gameweek:
+            continue
+        if fx.get("finished"):
+            continue
+        event = int(event)
+        home, away = int(fx["team_h"]), int(fx["team_a"])
+        index.setdefault(home, {}).setdefault(event, []).append(
+            {
+                "opponent": away,
+                "home": True,
+                "fdr": int(fx.get("team_h_difficulty", 3)),
+            }
+        )
+        index.setdefault(away, {}).setdefault(event, []).append(
+            {
+                "opponent": home,
+                "home": False,
+                "fdr": int(fx.get("team_a_difficulty", 3)),
+            }
+        )
+    return index
+
+
+def build_team_index(teams: Sequence[Mapping]) -> dict[int, dict]:
+    """Index teams by id, with league-average strengths for normalisation."""
+    by_id = {int(t["id"]): t for t in teams}
+    if not by_id:
+        return {}
+
+    def avg(key: str) -> float:
+        values = [_f(t.get(key)) for t in by_id.values()]
+        values = [v for v in values if v > 0]
+        return sum(values) / len(values) if values else 1.0
+
+    league = {
+        "attack_home": avg("strength_attack_home"),
+        "attack_away": avg("strength_attack_away"),
+        "defence_home": avg("strength_defence_home"),
+        "defence_away": avg("strength_defence_away"),
+    }
+    for t in by_id.values():
+        t["_league"] = league
+    return by_id
+
+
+def _fixture_multipliers(
+    fixture: Mapping,
+    teams: Mapping[int, Mapping],
+) -> tuple[float, float]:
+    """``(attacking, conceding)`` multipliers for one fixture.
+
+    Attacking scales inversely with the opponent's defensive strength; conceding
+    scales with their attacking strength. Falls back to FDR when strength
+    ratings are missing, so the model still works on a thin payload.
+    """
+    opponent = teams.get(int(fixture["opponent"]))
+    at_home = bool(fixture["home"])
+
+    if not opponent or "_league" not in opponent:
+        # FDR fallback: 1 (easy) -> 1.3x attack, 5 (hard) -> 0.7x.
+        fdr = int(fixture.get("fdr", 3))
+        att = 1.3 - 0.15 * (fdr - 1)
+        con = 0.7 + 0.15 * (fdr - 1)
+        return _clamp(att, FIXTURE_MULT_MIN, FIXTURE_MULT_MAX), _clamp(
+            con, FIXTURE_MULT_MIN, FIXTURE_MULT_MAX
+        )
+
+    league = opponent["_league"]
+    # The opponent defends away when we're at home, and vice versa.
+    opp_def = _f(
+        opponent.get("strength_defence_away" if at_home else "strength_defence_home")
+    )
+    opp_att = _f(
+        opponent.get("strength_attack_away" if at_home else "strength_attack_home")
+    )
+    league_def = league["defence_away"] if at_home else league["defence_home"]
+    league_att = league["attack_away"] if at_home else league["attack_home"]
+
+    att = (league_def / opp_def) if opp_def > 0 else 1.0
+    con = (opp_att / league_att) if league_att > 0 else 1.0
+
+    if at_home:
+        att *= HOME_ATTACK_BONUS
+        con *= HOME_DEFENCE_BONUS
+
+    return _clamp(att, FIXTURE_MULT_MIN, FIXTURE_MULT_MAX), _clamp(
+        con, FIXTURE_MULT_MIN, FIXTURE_MULT_MAX
+    )
+
+
+def fixture_multipliers(
+    fixture: Mapping, teams: Mapping[int, Mapping]
+) -> tuple[float, float]:
+    """Public alias — the fixture ticker uses the same definition the model does.
+
+    One definition, two consumers, so the ticker and the projections can never
+    disagree about how hard a fixture is.
+    """
+    return _fixture_multipliers(fixture, teams)
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def availability_factor(player: Mapping, gameweeks_ahead: int = 0) -> float:
+    """Probability the player is fit to feature, 0..1.
+
+    Hard zero for injured/suspended/unavailable. Doubtful players are scaled by
+    their published chance. The penalty relaxes toward 1.0 for later gameweeks,
+    because a knock now says little about a month from now — but a player who is
+    flat-out unavailable stays at zero throughout, since we have no recovery date.
+    """
+    status = str(player.get("status", "a"))
+    if status in UNAVAILABLE_STATUSES:
+        return 0.0
+    if status != "d":
+        return 1.0
+
+    chance = player.get("chance_of_playing_next_round")
+    base = DEFAULT_DOUBT_CHANCE if chance is None else _clamp(_f(chance) / 100.0, 0.0, 1.0)
+    if gameweeks_ahead <= 0:
+        return base
+    recovered = 1.0 - (1.0 - base) * ((1.0 - AVAILABILITY_RECOVERY) ** gameweeks_ahead)
+    return _clamp(recovered, 0.0, 1.0)
+
+
+def minutes_profile(player: Mapping, team_games: int) -> dict[str, float]:
+    """Expected minutes, start probability and 60-minute probability.
+
+    This is the term FCPS omitted entirely, and it is the single largest driver
+    of FPL returns — a hot-form 25-minute substitute is not a better pick than a
+    nailed starter, however good his per-90 numbers look.
+    """
+    if team_games <= 0:
+        return {"p_start": 0.0, "p_play": 0.0, "p_60": 0.0, "minutes": 0.0}
+
+    starts = _f(player.get("starts"))
+    minutes = _f(player.get("minutes"))
+
+    p_start = _clamp(starts / team_games, 0.0, 1.0)
+    mins_pg = minutes / team_games
+    p_60 = _clamp(mins_pg / 75.0, 0.0, 1.0)
+
+    # Someone with minutes but few starts is a regular substitute; give them a
+    # partial appearance probability rather than treating them as a non-player.
+    sub_rate = _clamp((mins_pg - p_start * 90.0) / 30.0, 0.0, 1.0)
+    p_play = _clamp(p_start + (1.0 - p_start) * sub_rate, 0.0, 1.0)
+
+    return {"p_start": p_start, "p_play": p_play, "p_60": p_60, "minutes": mins_pg}
+
+
+def minutes_risk(profile: Mapping[str, float]) -> str:
+    p_start = profile.get("p_start", 0.0)
+    if p_start >= 0.75:
+        return "low"
+    if p_start >= 0.45:
+        return "medium"
+    return "high"
+
+
+def _per_90(player: Mapping, per90_key: str, total_key: str, team_games: int) -> float:
+    """Prefer FPL's published per-90 rate; fall back to a season average.
+
+    Early in a season the per-90 fields can be absent or zero, and a fallback
+    keeps the model from silently projecting everyone at zero.
+    """
+    rate = _f(player.get(per90_key))
+    if rate > 0:
+        return rate
+    if team_games <= 0:
+        return 0.0
+    minutes = _f(player.get("minutes"))
+    if minutes <= 0:
+        return 0.0
+    return _f(player.get(total_key)) / minutes * 90.0
+
+
+def project_player(
+    player: Mapping,
+    gameweeks: Sequence[int],
+    fixture_index: Mapping[int, Mapping[int, Sequence[Mapping]]],
+    teams: Mapping[int, Mapping],
+    team_games: int,
+) -> dict:
+    """Project one player over ``gameweeks``.
+
+    Returns the per-gameweek breakdown, the horizon total, and enough context
+    (availability, minutes risk, value per million) for the UI and the optimiser
+    to work without recomputing anything.
+    """
+    position = position_of(player)
+    team_id = int(player.get("team", 0))
+    team_fixtures = fixture_index.get(team_id, {})
+
+    profile = minutes_profile(player, team_games)
+    mins_frac = _clamp(profile["minutes"] / 90.0, 0.0, 1.0)
+
+    xg90 = _per_90(player, "expected_goals_per_90", "expected_goals", team_games)
+    xa90 = _per_90(player, "expected_assists_per_90", "expected_assists", team_games)
+    xgc90 = _per_90(
+        player, "expected_goals_conceded_per_90", "expected_goals_conceded", team_games
+    )
+    saves90 = _per_90(player, "saves_per_90", "saves", team_games)
+    dc90 = _per_90(
+        player,
+        "defensive_contribution_per_90",
+        "defensive_contribution",
+        team_games,
+    )
+
+    # Underlying stats can be missing entirely in early seasons; fall back to
+    # actual returns so the model degrades rather than zeroing everyone out.
+    if xg90 <= 0 and team_games > 0 and profile["minutes"] > 0:
+        xg90 = _f(player.get("goals_scored")) / team_games / max(mins_frac, 0.01)
+    if xa90 <= 0 and team_games > 0 and profile["minutes"] > 0:
+        xa90 = _f(player.get("assists")) / team_games / max(mins_frac, 0.01)
+    if xgc90 <= 0 and team_games > 0 and profile["minutes"] > 0:
+        xgc90 = _f(player.get("goals_conceded")) / team_games / max(mins_frac, 0.01)
+
+    games_played = max(1.0, team_games)
+    bonus_pg = _f(player.get("bonus")) / games_played * BONUS_SHRINK
+    yellow_pg = _f(player.get("yellow_cards")) / games_played
+    red_pg = _f(player.get("red_cards")) / games_played
+
+    per_gameweek: list[dict] = []
+    for offset, gw in enumerate(gameweeks):
+        fixtures = list(team_fixtures.get(gw, []))
+        avail = availability_factor(player, offset)
+
+        components = {
+            "appearance": 0.0,
+            "goals": 0.0,
+            "assists": 0.0,
+            "clean_sheet": 0.0,
+            "conceded": 0.0,
+            "saves": 0.0,
+            "bonus": 0.0,
+            "defensive_contribution": 0.0,
+            "cards": 0.0,
+        }
+
+        for fixture in fixtures:
+            att_mult, con_mult = _fixture_multipliers(fixture, teams)
+
+            components["appearance"] += profile["p_play"] + profile["p_60"]
+            components["goals"] += (
+                xg90 * mins_frac * att_mult * GOAL_POINTS.get(position, 4)
+            )
+            components["assists"] += xa90 * mins_frac * att_mult * ASSIST_POINTS
+
+            lam = xgc90 * mins_frac * con_mult
+            cs_points = CLEAN_SHEET_POINTS.get(position, 0)
+            if cs_points:
+                # Clean sheet points need 60 minutes, hence the p_60 scaling.
+                components["clean_sheet"] += (
+                    math.exp(-lam) * cs_points * profile["p_60"]
+                )
+            if position in ("GKP", "DEF"):
+                components["conceded"] -= lam / 2.0
+            if position == "GKP":
+                components["saves"] += saves90 * mins_frac / 3.0
+
+            threshold = DEFCON_THRESHOLD.get(position, 0)
+            if threshold and dc90 > 0:
+                p_defcon = _clamp(dc90 * mins_frac / threshold, 0.0, 0.95)
+                components["defensive_contribution"] += p_defcon * DEFCON_POINTS
+
+            components["bonus"] += bonus_pg
+            components["cards"] -= yellow_pg + 3.0 * red_pg
+
+        # Blend at full strength, then apply availability to the result. Doing
+        # it the other way round would let ep_next leak points through for a
+        # player we already know is injured, because FPL's own estimate may not
+        # have caught up with the news.
+        model_total = sum(components.values())
+        if offset == 0:
+            blended, components = _blend_with_ep_next(
+                player, model_total, components, team_games, bool(fixtures)
+            )
+        else:
+            blended = model_total
+
+        blended *= avail
+        components = {k: avail * v for k, v in components.items()}
+
+        per_gameweek.append(
+            {
+                "gameweek": gw,
+                "xpts": round(blended, 2),
+                "fixtures": [
+                    {
+                        "opponent": _team_short(teams, fx["opponent"]),
+                        "home": fx["home"],
+                        "fdr": fx["fdr"],
+                    }
+                    for fx in fixtures
+                ],
+                "components": {k: round(v, 3) for k, v in components.items()},
+            }
+        )
+
+    horizon = round(sum(g["xpts"] for g in per_gameweek), 2)
+    price = int(player.get("now_cost", 0)) or 1
+
+    return {
+        "player_id": int(player["id"]),
+        "horizon_xpts": horizon,
+        "xpts_next": per_gameweek[0]["xpts"] if per_gameweek else 0.0,
+        "per_gameweek": per_gameweek,
+        "availability": round(availability_factor(player, 0), 3),
+        "minutes_risk": minutes_risk(profile),
+        "p_start": round(profile["p_start"], 3),
+        "xpts_per_million": round(horizon / (price / 10.0), 3),
+    }
+
+
+def _blend_with_ep_next(
+    player: Mapping,
+    model_total: float,
+    components: dict[str, float],
+    team_games: int,
+    has_fixture: bool,
+) -> tuple[float, dict[str, float]]:
+    """Blend the model's immediate gameweek with FPL's published ``ep_next``.
+
+    ``ep_next`` is a free, independently derived signal. It matters most early in
+    a season, when per-90 rates computed over two games are noise.
+
+    A blank gameweek is never blended — ``ep_next`` doesn't know the player isn't
+    playing, and letting it leak in would reintroduce exactly the bug that made
+    FCPS score blanks as easy fixtures.
+    """
+    if not has_fixture:
+        return 0.0, {k: 0.0 for k in components}
+
+    ep_next = _f(player.get("ep_next"))
+    if ep_next <= 0:
+        return model_total, components
+
+    weight = EP_NEXT_WEIGHT_EARLY if team_games < EARLY_SEASON_GAMES else EP_NEXT_WEIGHT
+    blended = (1.0 - weight) * model_total + weight * ep_next
+
+    # Rescale the components so they still sum to the blended total — the
+    # decomposition has to *be* the number, not a plausible story next to it.
+    if model_total > 0:
+        scale = blended / model_total
+        components = {k: v * scale for k, v in components.items()}
+    else:
+        # Nothing to rescale (a player with no minutes on record). Attribute the
+        # whole blended figure to appearance rather than leaving stray component
+        # values that wouldn't sum to the total.
+        components = {k: 0.0 for k in components}
+        components["appearance"] = blended
+
+    return blended, components
+
+
+def _team_short(teams: Mapping[int, Mapping], team_id: int) -> str:
+    team = teams.get(int(team_id))
+    return str(team.get("short_name", "UNK")) if team else "UNK"
+
+
+def team_games_played(teams: Sequence[Mapping], events: Sequence[Mapping]) -> int:
+    """How many league games each team has played, on average.
+
+    Used to turn season totals into per-game rates. Prefers the ``played`` field
+    on teams; falls back to counting finished events.
+    """
+    played = [int(t.get("played", 0) or 0) for t in teams]
+    played = [p for p in played if p > 0]
+    if played:
+        return max(1, round(sum(played) / len(played)))
+    finished = sum(1 for e in events if e.get("finished"))
+    return max(0, finished)
+
+
+def project_all(
+    elements: Sequence[Mapping],
+    fixtures: Sequence[Mapping],
+    teams: Sequence[Mapping],
+    events: Sequence[Mapping],
+    from_gameweek: int,
+    horizon: int = 5,
+) -> dict[int, dict]:
+    """Project every player over the horizon. Returns ``player_id -> projection``."""
+    gameweeks = _horizon_gameweeks(events, from_gameweek, horizon)
+    fixture_index = build_fixture_index(fixtures, from_gameweek)
+    team_index = build_team_index(teams)
+    games = team_games_played(teams, events)
+
+    return {
+        int(p["id"]): project_player(p, gameweeks, fixture_index, team_index, games)
+        for p in elements
+        if POSITIONS.get(int(p.get("element_type", 0))) in ("GKP", "DEF", "MID", "FWD")
+    }
+
+
+def _horizon_gameweeks(
+    events: Sequence[Mapping], from_gameweek: int, horizon: int
+) -> list[int]:
+    """The next ``horizon`` gameweek numbers, respecting the real event list."""
+    ids = sorted(
+        int(e["id"]) for e in events if int(e.get("id", 0)) >= from_gameweek
+    )
+    if not ids:
+        return list(range(from_gameweek, from_gameweek + horizon))
+    return ids[:horizon]

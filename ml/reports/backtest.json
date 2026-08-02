@@ -1,0 +1,263 @@
+{
+  "season": "2024-25",
+  "model": "hgb_poisson",
+  "protocol": "expanding-window walk-forward",
+  "retrain_step": 2,
+  "start_gameweek": 8,
+  "folds": 16,
+  "rows": 11832,
+  "results": {
+    "pred_model": {
+      "n": 11832,
+      "mae": 0.7565582827225507,
+      "rmse": 1.6778161711088815,
+      "mae_starters": 1.565159100637739,
+      "spearman_gw": 0.7612468647343691,
+      "precision_at_k": 0.5125,
+      "mean_actual_top_k": 8.6625,
+      "lift_over_mean": 7.458363655197968,
+      "gameweeks": 16,
+      "transfer_transfer_calls": 93766,
+      "transfer_accuracy": 0.8377130303094938,
+      "transfer_mean_realised_gain": 3.1746048674359577,
+      "transfer_mean_predicted_gain": 3.1587809417020316
+    },
+    "bl_mean": {
+      "n": 11832,
+      "mae": 1.5350359603359556,
+      "rmse": 2.4899280640286863,
+      "mae_starters": 2.2065927323941574,
+      "spearman_gw": NaN,
+      "precision_at_k": 0.043750000000000004,
+      "mean_actual_top_k": 1.940625,
+      "lift_over_mean": 0.7364886551979686,
+      "gameweeks": 16,
+      "transfer_transfer_calls": 0,
+      "transfer_accuracy": NaN,
+      "transfer_mean_realised_gain": NaN,
+      "transfer_mean_predicted_gain": NaN
+    },
+    "bl_ppg": {
+      "n": 11832,
+      "mae": 1.3983495781062596,
+      "rmse": 2.366938319479484,
+      "mae_starters": 2.524207734216979,
+      "spearman_gw": 0.5658258475982892,
+      "precision_at_k": 0.1375,
+      "mean_actual_top_k": 3.778125,
+      "lift_over_mean": 2.5739886551979687,
+      "gameweeks": 16,
+      "transfer_transfer_calls": 147290,
+      "transfer_accuracy": 0.5529567519858782,
+      "transfer_mean_realised_gain": 1.7066739086156562,
+      "transfer_mean_predicted_gain": 2.4689015329441983
+    },
+    "bl_form": {
+      "n": 11832,
+      "mae": 1.1184217940049583,
+      "rmse": 2.2580163583752233,
+      "mae_starters": 2.3770346779900917,
+      "spearman_gw": 0.6842120636533715,
+      "precision_at_k": 0.1375,
+      "mean_actual_top_k": 4.134375,
+      "lift_over_mean": 2.930238655197969,
+      "gameweeks": 16,
+      "transfer_transfer_calls": 117253,
+      "transfer_accuracy": 0.7005193896957861,
+      "transfer_mean_realised_gain": 2.210868805062557,
+      "transfer_mean_predicted_gain": 2.873192299273082
+    },
+    "bl_fcps_points": {
+      "n": 11832,
+      "mae": 1.1276925701029714,
+      "rmse": 2.184431097868061,
+      "mae_starters": 2.145213727956712,
+      "spearman_gw": 0.616563080164963,
+      "precision_at_k": 0.153125,
+      "mean_actual_top_k": 4.4281250000000005,
+      "lift_over_mean": 3.223988655197969,
+      "gameweeks": 16,
+      "transfer_transfer_calls": 98143,
+      "transfer_accuracy": 0.7237704166369481,
+      "transfer_mean_realised_gain": 2.4467358853917243,
+      "transfer_mean_predicted_gain": 2.0278153677949193
+    },
+    "bl_fpl_xp": {
+      "n": 11832,
+      "mae": 0.975027832491222,
+      "rmse": 2.043167355440969,
+      "mae_starters": 1.9438229870928088,
+      "spearman_gw": 0.7518572958502235,
+      "precision_at_k": 0.31875,
+      "mean_actual_top_k": 6.475,
+      "lift_over_mean": 5.270863655197968,
+      "gameweeks": 16,
+      "transfer_transfer_calls": 100215,
+      "transfer_accuracy": 0.7440203562340967,
+      "transfer_mean_realised_gain": 2.676665169884748,
+      "transfer_mean_predicted_gain": 2.965799531008332
+    }
+  },
+  "per_gameweek": [
+    {
+      "gameweek": 8,
+      "n": 666,
+      "pred_model": 0.6543969933183978,
+      "bl_mean": 1.4456586877845603,
+      "bl_ppg": 1.2433254683254682,
+      "bl_form": 1.069944944944945,
+      "bl_fcps_points": 1.0234806959628806,
+      "bl_fpl_xp": 0.8534534534534536
+    },
+    {
+      "gameweek": 10,
+      "n": 670,
+      "pred_model": 0.5997294878192294,
+      "bl_mean": 1.4079660408257078,
+      "bl_ppg": 1.185449538024165,
+      "bl_form": 1.007089552238806,
+      "bl_fcps_points": 0.9837628599091397,
+      "bl_fpl_xp": 0.7934328358208955
+    },
+    {
+      "gameweek": 12,
+      "n": 678,
+      "pred_model": 0.6887057767753026,
+      "bl_mean": 1.5306921919821612,
+      "bl_ppg": 1.3488977959110702,
+      "bl_form": 1.1965339233038348,
+      "bl_fcps_points": 1.1211987812175306,
+      "bl_fpl_xp": 0.8880530973451326
+    },
+    {
+      "gameweek": 14,
+      "n": 690,
+      "pred_model": 0.7525206924545094,
+      "bl_mean": 1.543433662880616,
+      "bl_ppg": 1.3939423217684088,
+      "bl_form": 1.2902173913043478,
+      "bl_fcps_points": 1.1708155757329326,
+      "bl_fpl_xp": 1.065217391304348
+    },
+    {
+      "gameweek": 16,
+      "n": 693,
+      "pred_model": 0.6489561556306926,
+      "bl_mean": 1.47790150571876,
+      "bl_ppg": 1.2790312741611443,
+      "bl_form": 1.0119047619047619,
+      "bl_fcps_points": 1.0262586949143941,
+      "bl_fpl_xp": 0.8611832611832613
+    },
+    {
+      "gameweek": 18,
+      "n": 701,
+      "pred_model": 0.7878798071385074,
+      "bl_mean": 1.4902028744535978,
+      "bl_ppg": 1.2677453424033942,
+      "bl_form": 0.9917974322396577,
+      "bl_fcps_points": 0.995699600712593,
+      "bl_fpl_xp": 0.8990014265335236
+    },
+    {
+      "gameweek": 20,
+      "n": 709,
+      "pred_model": 0.6356919063398169,
+      "bl_mean": 1.4326810728893924,
+      "bl_ppg": 1.2764915998776754,
+      "bl_form": 1.008462623413258,
+      "bl_fcps_points": 0.9513008049037226,
+      "bl_fpl_xp": 0.8375176304654443
+    },
+    {
+      "gameweek": 22,
+      "n": 724,
+      "pred_model": 1.1543034616991723,
+      "bl_mean": 1.5399522824323655,
+      "bl_ppg": 1.4159394953167295,
+      "bl_form": 1.1433011049723756,
+      "bl_fcps_points": 1.0853844419237166,
+      "bl_fpl_xp": 1.191988950276243
+    },
+    {
+      "gameweek": 24,
+      "n": 756,
+      "pred_model": 0.8058053064823845,
+      "bl_mean": 1.740193249479782,
+      "bl_ppg": 1.5849397701841779,
+      "bl_form": 1.375,
+      "bl_fcps_points": 1.3057585095009525,
+      "bl_fpl_xp": 1.2370370370370372
+    },
+    {
+      "gameweek": 26,
+      "n": 779,
+      "pred_model": 0.7506123411758191,
+      "bl_mean": 1.6562211909339792,
+      "bl_ppg": 1.5456484259954295,
+      "bl_form": 1.2522464698331195,
+      "bl_fcps_points": 1.1448592926134293,
+      "bl_fpl_xp": 0.9360718870346599
+    },
+    {
+      "gameweek": 28,
+      "n": 784,
+      "pred_model": 0.5946470927259959,
+      "bl_mean": 1.4762141211395041,
+      "bl_ppg": 1.3373836528834893,
+      "bl_form": 1.0251913265306123,
+      "bl_fcps_points": 0.945206058454842,
+      "bl_fpl_xp": 0.8563775510204081
+    },
+    {
+      "gameweek": 30,
+      "n": 789,
+      "pred_model": 0.6204852471631686,
+      "bl_mean": 1.486110062097505,
+      "bl_ppg": 1.3728903215837327,
+      "bl_form": 1.084917617237009,
+      "bl_fcps_points": 1.0345036935390033,
+      "bl_fpl_xp": 0.782382762991128
+    },
+    {
+      "gameweek": 32,
+      "n": 792,
+      "pred_model": 1.227300186004026,
+      "bl_mean": 1.7038168516513994,
+      "bl_ppg": 1.6037472000016804,
+      "bl_form": 1.1884469696969697,
+      "bl_fcps_points": 1.2787992767058143,
+      "bl_fpl_xp": 1.3598484848484849
+    },
+    {
+      "gameweek": 34,
+      "n": 799,
+      "pred_model": 0.7462355293580382,
+      "bl_mean": 1.4876963335931064,
+      "bl_ppg": 1.5002993680431882,
+      "bl_form": 1.1271380892782645,
+      "bl_fcps_points": 1.060835290734381,
+      "bl_fpl_xp": 1.2080745341614907
+    },
+    {
+      "gameweek": 36,
+      "n": 801,
+      "pred_model": 0.6901391215726252,
+      "bl_mean": 1.5599224121574662,
+      "bl_ppg": 1.4654913396908704,
+      "bl_form": 1.0677278401997503,
+      "bl_fcps_points": 1.0851976280567623,
+      "bl_fpl_xp": 0.8838951310861424
+    },
+    {
+      "gameweek": 38,
+      "n": 801,
+      "pred_model": 0.7098247765021499,
+      "bl_mean": 1.5366310119994402,
+      "bl_ppg": 1.45393642062827,
+      "bl_form": 1.0402621722846441,
+      "bl_fcps_points": 1.746150931212663,
+      "bl_fpl_xp": 0.9343320848938828
+    }
+  ]
+}

@@ -3,6 +3,15 @@ __pycache__
 notebooks
 archive
 .env
+.venv/
+
+# Training artefacts. The cache is ~200 MB of upstream CSVs and the model is a
+# build output — both are reproducible from `python -m ml.sources && ml.train`.
+# The *reports* are checked in, because they are the evidence for the numbers in
+# PRDs/ml-methodology.md and a claim without its receipt is just a claim.
+ml/_data/
+ml/artifacts/
+!ml/reports/
 # Flutter build output is committed so Heroku can serve it.
 # Regenerate locally with: bash scripts/deploy_flutter.sh
 # flutter_web/

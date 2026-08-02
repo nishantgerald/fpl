@@ -1,19 +1,51 @@
 #!/usr/bin/env python3
+"""FPL companion API.
+
+Routes are thin: they parse query params, call into :mod:`engine`, and serialise.
+Everything that decides anything lives in the engine package, where it's pure and
+testable without a network.
+
+Three scoring systems are exposed, and the client can see and choose between
+them via ``GET /api/engines``:
+
+``?engine=xpts``   the hand-built component model (default; no dependencies)
+``?engine=ml``     the trained model in :mod:`ml`, falling back to ``xpts``
+``?engine=blend``  the mean of the two
+``/api/fcps-recommendations``  FCPS plus a written column from the language model
+
+Every engine feeds the same constrained optimiser, so a recommendation is legal
+under FPL's rules regardless of which one produced its numbers.
+
+See ``PRDs/`` in the Flutter repo for the specifications behind each endpoint,
+and ``PRDs/ml-methodology.md`` for how the trained model was built and validated.
+"""
 
 import os
-import requests
-import pandas as pd
-from flask import Flask, render_template, jsonify, request
-from flask_cors import CORS
+
 from dotenv import load_dotenv
-from openai import OpenAI
+from flask import Flask, Response, jsonify, redirect, request, send_from_directory
+from flask_cors import CORS
+
+from engine import captain as captain_engine
+from engine import fcps_llm, fpl_client, ml_scorer, narrative, prices, rules, service, ticker
+
+# Once, at import — not inside a request handler, which is where the old code
+# called it.
+load_dotenv()
 
 app = Flask(__name__)
-CORS(app)  # Allow Flutter web app to call this API
-pd.set_option("display.max_rows", None)
 
-# ------------------- Globals & Mappings -------------------
-cached_data = None  # Global variable to store FPL data
+# Restrict CORS to the API surface and the origins that actually use it. The old
+# `CORS(app)` opened every route to every origin.
+_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "ALLOWED_ORIGINS",
+        "https://fpl.nishantgerald.com,http://localhost:*,http://127.0.0.1:*",
+    ).split(",")
+    if o.strip()
+]
+CORS(app, resources={r"/api/*": {"origins": _ALLOWED_ORIGINS}})
 
 STATUS_MAP = {
     "a": "Available",
@@ -21,852 +53,521 @@ STATUS_MAP = {
     "d": "Doubtful",
     "s": "Suspended",
     "u": "Unavailable",
+    "n": "Unavailable",
 }
 
-POSITION_MAP = {
-    1: "GKP",
-    2: "DEF",
-    3: "MID",
-    4: "FWD",
-    5: "MGR",
-}
 
-# ------------------- Fetch & Cache Data -------------------
-def fetch_player_data():
-    """
-    Fetch overall bootstrap data from FPL API.
-    """
-    url = "https://fantasy.premierleague.com/api/bootstrap-static/"
-    response = requests.get(url)
-    return response.json() if response.status_code == 200 else None
+@app.before_request
+def _reset_freshness():
+    """Track how fresh this request's data is, for the `meta` block."""
+    fpl_client.begin_request()
 
-def get_cached_data():
-    """
-    Use a global cache so we don't repeatedly fetch the entire data set
-    on every request. If cached_data is None, fetch from the API.
-    """
-    global cached_data
-    if cached_data is None:
-        print("Fetching data from FPL API...")
-        cached_data = fetch_player_data()
-    return cached_data
 
-def fetch_fixtures_data():
-    """
-    Fetch all fixtures from the FPL API.
-    Returns fixture list if success, else None.
-    """
-    url = "https://fantasy.premierleague.com/api/fixtures/"
-    response = requests.get(url)
-    if response.status_code != 200:
-        return None
-    return response.json()
+@app.errorhandler(service.ServiceError)
+def _handle_service_error(error):
+    return jsonify(error.to_dict()), error.status
 
-def fetch_current_gameweek():
+
+@app.errorhandler(fcps_llm.FcpsUnavailable)
+def _handle_fcps_unavailable(error):
+    """FCPS advice couldn't be produced. The client shows why, not a spinner.
+
+    The route this replaces returned 500 from a missing Jinja template, and its
+    working path returned 200 with an exception string in the success field.
     """
-    Identify the current gameweek from the FPL 'events' data.
+    return jsonify(error.to_dict()), error.status
+
+
+@app.errorhandler(fpl_client.UpstreamUnavailable)
+def _handle_upstream_unavailable(error):
+    """FPL is down and we have nothing cached — say so, don't leak a traceback."""
+    return jsonify(
+        {
+            "code": "upstream_unavailable",
+            "error": "The Fantasy Premier League API isn't responding right now.",
+        }
+    ), 503
+
+
+# ------------------------------------------------------------------ helpers
+
+
+def _status_class(status_code: str) -> str:
+    if status_code == "d":
+        return "doubtful"
+    if status_code in ("i", "s", "u", "n"):
+        return "injured"
+    return "available"
+
+
+def _int_arg(name, default=None, low=None, high=None):
+    value = request.args.get(name, type=int)
+    if value is None:
+        return default
+    if low is not None:
+        value = max(low, value)
+    if high is not None:
+        value = min(high, value)
+    return value
+
+
+def _bool_arg(name, default=True):
+    raw = request.args.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes")
+
+
+def _engine_arg():
+    """Which scoring engine to project with. Unknown values fall back silently."""
+    requested = (request.args.get("engine") or "").strip().lower()
+    return requested if requested in ml_scorer.ENGINES else ml_scorer.DEFAULT_ENGINE
+
+
+def _player_payload(element, team_short, projection, fcps_entry=None):
+    """One player, as the client consumes them.
+
+    Carries both scores. They answer different questions — xPts is in points and
+    prices a hit, FCPS is a 0-1000 composite that ranks — and the client labels
+    them as such rather than presenting two numbers that look interchangeable.
     """
-    data = fetch_player_data()
-    if not data:
-        return None
-    events = data["events"]
-    # Between seasons and before GW1 no event is current, so fall back to the
-    # upcoming one.
-    return next(
-        (e["id"] for e in events if e["is_current"]),
-        next((e["id"] for e in events if e["is_next"]), 1),
+    status_code = str(element.get("status", "a"))
+    next_fixtures = (
+        projection["per_gameweek"][0]["fixtures"] if projection.get("per_gameweek") else []
     )
-
-def get_season_state():
-    """
-    Describe where we are in the season. Before the GW1 deadline no event is
-    current and FPL serves no picks for any entry, so callers need to
-    distinguish "not started yet" from a genuine lookup failure.
-    """
-    data = fetch_player_data()
-    if not data:
-        return None
-    events = data["events"]
-    current = next((e for e in events if e["is_current"]), None)
-    upcoming = current or next((e for e in events if e["is_next"]), events[0])
+    fcps_entry = fcps_entry or {}
     return {
-        "started": current is not None,
-        "gameweek": upcoming["id"],
-        "gameweek_name": upcoming["name"],
-        "deadline": upcoming["deadline_time"],
+        "id": int(element["id"]),
+        "name": f"{element.get('first_name', '')} {element.get('second_name', '')}".strip(),
+        "web_name": element.get("web_name", ""),
+        "team": team_short,
+        "team_id": int(element.get("team", 0)),
+        "position": rules.position_of(element),
+        "price": int(element.get("now_cost", 0)) / 10,
+        "total_points": int(element.get("total_points", 0)),
+        "form": _safe_float(element.get("form")),
+        "selected_by_percent": _safe_float(element.get("selected_by_percent")),
+        "status": STATUS_MAP.get(status_code, "Unknown"),
+        "status_class": _status_class(status_code),
+        "news": element.get("news", ""),
+        "ict_index": _safe_float(element.get("ict_index")),
+        "xpts": projection.get("xpts_next", 0.0),
+        "xpts_horizon": projection.get("horizon_xpts", 0.0),
+        "xpts_per_million": projection.get("xpts_per_million", 0.0),
+        "minutes_risk": projection.get("minutes_risk", "medium"),
+        "availability": projection.get("availability", 1.0),
+        "next_3_fdr": fcps_entry.get("next_3_fdr", _next_n_fdr(projection, 3)),
+        "next_fixtures": next_fixtures,
+        "photo": f"{request.host_url}api/photo/{element.get('code', 0)}",
+        # FCPS, restored. `fcps_fixtures` says how many fixtures the FDR term is
+        # built on — the score divides by three fixtures' worth of difficulty
+        # whether or not three were scheduled.
+        "fcps": fcps_entry.get("fcps", 0.0),
+        "fcps_fixtures": fcps_entry.get("fixtures_counted", 0),
+        "fcps_components": fcps_entry.get("components", {}),
+        "engine": projection.get("engine", "xpts"),
     }
 
-def build_team_fixtures(fixtures, current_gameweek):
+
+def _next_n_fdr(projection, count):
+    """Sum of the FDRs of the next `count` fixtures actually scheduled.
+
+    Blanks contribute nothing rather than flattering the total, which is the bug
+    the old fixed divisor of 15 hid.
     """
-    Build a dictionary of upcoming fixtures keyed by team ID,
-    each containing a list of its fixture difficulties and gameweeks.
-    """
-    team_fixtures = {}
-    for fixture in fixtures:
-        if fixture["event"] is None or fixture["event"] < current_gameweek:
-            continue
-        team_h = fixture["team_h"]
-        team_a = fixture["team_a"]
-        if team_h not in team_fixtures:
-            team_fixtures[team_h] = []
-        if team_a not in team_fixtures:
-            team_fixtures[team_a] = []
-        team_fixtures[team_h].append({
-            "difficulty": fixture["team_h_difficulty"],
-            "gameweek": fixture["event"]
-        })
-        team_fixtures[team_a].append({
-            "difficulty": fixture["team_a_difficulty"],
-            "gameweek": fixture["event"]
-        })
-    return team_fixtures
+    difficulties = [
+        fixture["fdr"]
+        for entry in projection.get("per_gameweek", ())
+        for fixture in entry["fixtures"]
+    ][:count]
+    return sum(difficulties)
 
-def get_trade_recommendations(user_players_df, top_players_df):
-    """
-    Generate trade recommendations for the user's fantasy team
-    using the GPT-4o-mini model.
 
-    Args:
-        user_players_df (pd.DataFrame): DataFrame containing the user's current team.
-        top_players_df (pd.DataFrame): DataFrame containing the top players for the gameweek.
-
-    Returns:
-        str: Response from GPT-4o-mini with trade recommendations.
-    """
-    # Load environment variables
-    load_dotenv()
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    
-    if not openai_api_key:
-        raise ValueError("OPENAI_API_KEY not found in the .env file.")
-
-    # Initialize the OpenAI client
-    client = OpenAI(api_key=openai_api_key)
-
-    # Prepare the prompt
-    prompt = (
-        f"""
-        You are an expert fantasy premier league analyst. You will give the user the best transfer recommendations based on their current team, 
-        and the top players for the upcoming weeks. Take into account all their stats including FCPS (fantasy composite player score = a composite 
-        score that takes into account the difficulty rating for the next 3 games, the form, total score, and ICT index) and other stats. The user's 
-        team is {user_players_df.to_dict(orient='records')} and the top players are {top_players_df.to_dict(orient='records')}. Give the user the best 
-        trade recommendations for this gameweek.
-        
-        When considering trades, consider:
-        - Max number of players from the same team can only be 3
-        - Never suggest trade IN if the player is already in the user's current team
-        - Never suggest trade OUT if the player is not in the user's current team
-        - the trade out and trade in values to ensure that the trade is actually feasible in cost.
-        
-        Your response should be structured as follows (with sample data):
-            # Fantasy Premier League Transfer Recommendations
-            1. Goalkeeper
-            * Out: Matz Sels (GKP, NFO)
-            Price: 5.0
-            Reason: While he has decent form and FCPS, there are other GKP options with lower prices and potential better returns.
-            * In: Dean Henderson (GKP, CRY)
-
-                Price: 4.5
-                Total Points: 79
-                Form: 4.8
-                Next 3 FDR: 7
-                FCPS: 426.0
-                ICT Index: 51.6
-            ---
-            2. Defender
-            * Out: ...
-            Price: 6.4
-            Reason: ...
-            * In: Trent Alexander-Arnold (DEF, LIV)
-            ...
-            ...
-            ...
-            ---
-            3. Midfielder
-            * Out: ...
-            Price: 5.1
-            Reason: ...
-            * In: Anthony Gordon (MID, NEW)
-            ...
-            ...
-            ...
-            ---
-            4. Forward
-            * Out: ...
-            Price: 9.5
-            Reason: ...
-            * In: ...
-            ...
-            ...
-            ...
-            ---
-            ### Summary of Recommendations
-            Out Player	In Player	Position	Price Change	Notes
-            Matz Sels (5.0)	Dean Henderson (4.5)	GKP	-0.5	Solid alternative with potential value.
-            ...
-            ...
-            ...
-
-            ## Conclusion
-            Consider the suggested transfers to strengthen your lineup, which will not only save cost but also improve potential points from upcoming fixtures. Make sure to monitor injuries and form, as this can influence your strategy leading up to gameweek deadlines.
-
-        Format your response in markdown. Use tables, headers, and bullet points.
-        """
-    )
-
-    # Make the API call
+def _safe_float(value, default=0.0):
     try:
-        completion = client.chat.completions.create(
-            # model="gpt-4o-mini",
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        # Extract and return the response
-        return completion.choices[0].message.content
-    except Exception as e:
-        return f"Error generating trade recommendations: {str(e)}"
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
-# ------------------- Normalization & Scoring -------------------
-def get_normalization_values():
-    """
-    Fetch global maximum values for normalization across all players
-    (total_points, form, next_3_fdr, ict_index).
-    """
-    data = get_cached_data()
-    if not data:
-        return None
 
-    players = data["elements"]
-    return {
-        "total_points": max(p["total_points"] for p in players),
-        "form": max(float(p["form"]) for p in players),
-        "next_3_fdr": 15,  # Hardcoded maximum for next 3 fixtures FDR
-        "ict_index": max(float(p["ict_index"]) for p in players),
-    }
+# ------------------------------------------------------------------ routes
 
-def calculate_fcps(dataframe, weights=None, max_values=None):
-    """
-    Calculate FCPS (Fantasy Composite Player Score) for a given DataFrame.
-    If max_values is provided, it uses them for normalization; otherwise,
-    it calculates normalization values dynamically from the DataFrame.
-    """
-    if weights is None:
-        weights = {
-            "total_points_weight": 0.2,
-            "form_weight": 0.4,
-            "fdr_weight": 0.25,
-            "ict_index_weight": 0.15,
-        }
 
-    numeric_columns = ["total_points", "form", "next_3_fdr", "ict_index"]
-    for col in numeric_columns:
-        dataframe[col] = pd.to_numeric(dataframe[col], errors="coerce")  # Convert to numeric
-
-    # Fill missing data with 0
-    if dataframe[numeric_columns].isnull().any().any():
-        dataframe.fillna(0, inplace=True)
-
-    # Preseason every player has 0 points and 0 form, so guard the divisor —
-    # a 0 max means every value is 0 and the normalized term is 0 either way.
-    def safe_max(value):
-        return value if value and value > 0 else 1
-
-    if max_values:
-        divisors = {col: safe_max(max_values[col]) for col in numeric_columns}
-    else:
-        divisors = {col: safe_max(dataframe[col].max()) for col in numeric_columns}
-
-    dataframe["total_points_norm"] = dataframe["total_points"] / divisors["total_points"]
-    dataframe["form_norm"] = dataframe["form"] / divisors["form"]
-    dataframe["fdr_norm"] = dataframe["next_3_fdr"] / divisors["next_3_fdr"]
-    dataframe["ict_index_norm"] = dataframe["ict_index"] / divisors["ict_index"]
-
-    # Invert FDR because lower FDR is better (so we do 1 - normalized FDR)
-    dataframe["fcps"] = (
-        weights["total_points_weight"] * dataframe["total_points_norm"]
-        + weights["form_weight"] * dataframe["form_norm"]
-        + weights["fdr_weight"] * (1 - dataframe["fdr_norm"])
-        + weights["ict_index_weight"] * dataframe["ict_index_norm"]
-    )
-
-    # Scale & round
-    dataframe["fcps"] = (dataframe["fcps"].round(3) * 1000)
-
-    # Drop intermediate columns
-    dataframe.drop(
-        ["total_points_norm", "form_norm", "fdr_norm", "ict_index_norm"],
-        axis=1,
-        inplace=True
-    )
-    return dataframe
-
-def calculate_next_3_fdr(team_id, team_fixtures, current_gameweek):
-    """
-    Sum fixture difficulties for the next 3 fixtures of a team.
-    """
-    future_fixtures = [
-        f for f in team_fixtures.get(team_id, []) if f["gameweek"] >= current_gameweek
-    ]
-    next_fixtures = sorted(future_fixtures, key=lambda x: x["gameweek"])[:3]
-    return sum(fx["difficulty"] for fx in next_fixtures)
-
-# ------------------- Picks & Organization -------------------
-def fetch_gameweek_picks(user_id, gameweek):
-    """
-    Given an FPL user id and a gameweek, fetch the user's picks.
-    """
-    url = f"https://fantasy.premierleague.com/api/entry/{user_id}/event/{gameweek}/picks/"
-    response = requests.get(url)
-    return response.json() if response.status_code == 200 else None
-
-def organize_team(picks, players):
-    """
-    Return a dictionary of { position : [list of player dicts] } for the starting lineup,
-    and a separate bench list.
-    """
-    lineup = {"GKP": [], "DEF": [], "MID": [], "FWD": []}
-    bench = []
-
-    for pick in picks:
-        element_id = pick["element"]
-        player = players.get(element_id, {})
-        status = STATUS_MAP.get(player["status"], "Unknown")
-
-        player_data = {
-            "id": element_id,
-            "name": f"{player.get('first_name', '')} {player.get('second_name', '')}",
-            "photo": (
-                f"{request.host_url}api/photo/{player['code']}"
-            ),
-            "position": POSITION_MAP[player["element_type"]],
-            "is_captain": pick["is_captain"],
-            "is_vice_captain": pick["is_vice_captain"],
-            "status": status,
-            "status_class": (
-                "doubtful" if status == "Doubtful"
-                else (
-                    "injured" if status in ["Injured", "Suspended", "Unavailable"]
-                    else "available"
-                )
-            ),
-        }
-
-        # If multiplier > 0, it's part of the starting lineup
-        if pick["multiplier"] > 0:
-            lineup[player_data["position"]].append(player_data)
-        else:
-            bench.append(player_data)
-
-    return lineup, bench
-
-# ------------------- DataFrame Builders -------------------
-def get_player_dataframe(player_ids, starting_eleven_ids):
-    """
-    Build a DataFrame of player data for the given player_ids, including FCPS,
-    and sort in descending order of FCPS. Distinguish who is in starting eleven.
-    """
-    data = get_cached_data()
-    if not data:
-        print("Failed to fetch player data.")
-        return pd.DataFrame()
-
-    # Fetch fixtures & current gameweek
-    fixtures = fetch_fixtures_data()
-    if fixtures is None:
-        print("Failed to fetch fixture data.")
-        return pd.DataFrame()
-
-    current_gameweek = fetch_current_gameweek()
-    if not current_gameweek:
-        print("Failed to fetch current gameweek.")
-        return pd.DataFrame()
-
-    # Prepare data
-    players = {p["id"]: p for p in data["elements"]}
-    team_abbreviations = {team["id"]: team["short_name"] for team in data["teams"]}
-    team_fixtures = build_team_fixtures(fixtures, current_gameweek)
-    normalization_values = get_normalization_values()
-
-    # Filter for the requested players
-    filtered_players = []
-    for pid in player_ids:
-        player = players.get(pid)
-        if player:
-            team_id = player["team"]
-            next_3_fdr = calculate_next_3_fdr(team_id, team_fixtures, current_gameweek)
-
-            filtered_players.append({
-                "id": player["id"],
-                "name": f"{player['first_name']} {player['second_name']}",
-                "team": team_abbreviations.get(team_id, "UNK"),
-                "position": POSITION_MAP[player["element_type"]],
-                "price": player["now_cost"] / 10,
-                "total_points": player["total_points"],
-                "form": player["form"],
-                "selected_by_percent": player["selected_by_percent"],
-                "status": STATUS_MAP.get(player["status"], "Unknown"),
-                "next_3_fdr": next_3_fdr,
-                "starting_eleven": pid in starting_eleven_ids,
-                "ict_index": player["ict_index"],
-            })
-
-    # Convert to DataFrame
-    if not filtered_players:
-        print("No player data fetched for the given IDs.")
-        return pd.DataFrame()
-
-    df = pd.DataFrame(filtered_players)
-    df = calculate_fcps(df, max_values=normalization_values)
-    return df
-
-def print_top_players():
-    """
-    Calculate FCPS for all available players, sort them by FCPS descending,
-    and select top GKP, DEF, MID, FWD. Return combined DataFrame.
-    """
-    data = get_cached_data()
-    if not data:
-        print("Failed to fetch player data.")
-        return
-
-    fixtures = fetch_fixtures_data()
-    if fixtures is None:
-        print("Failed to fetch fixture data.")
-        return
-
-    current_gameweek = fetch_current_gameweek()
-    if not current_gameweek:
-        print("Failed to fetch current gameweek.")
-        return
-
-    players = {p["id"]: p for p in data["elements"]}
-    team_abbreviations = {team["id"]: team["short_name"] for team in data["teams"]}
-    team_fixtures = build_team_fixtures(fixtures, current_gameweek)
-    normalization_values = get_normalization_values()
-
-    player_list = []
-    for p in players.values():
-        # Only consider 'Available' players in top players logic
-        if p["status"] != "a":
-            continue
-
-        team_id = p["team"]
-        next_3_fdr = calculate_next_3_fdr(team_id, team_fixtures, current_gameweek)
-
-        player_list.append({
-            "id": p["id"],
-            "name": f"{p['first_name']} {p['second_name']}",
-            "team": team_abbreviations.get(team_id, "UNK"),
-            "position": POSITION_MAP[p["element_type"]],
-            "price": p["now_cost"] / 10,
-            "total_points": p["total_points"],
-            "form": float(p["form"]),
-            "next_3_fdr": next_3_fdr,
-            "ict_index": p["ict_index"],
-        })
-
-    df = pd.DataFrame(player_list)
-    df["ict_index"] = pd.to_numeric(df["ict_index"], errors="coerce")
-    df = calculate_fcps(df, max_values=normalization_values)
-    df = df.sort_values(by="fcps", ascending=False)
-
-    # Filter top players by position
-    top_gkps = df[df["position"] == "GKP"].head(5)
-    top_defs = df[df["position"] == "DEF"].head(15)
-    top_mids = df[df["position"] == "MID"].head(25)
-    top_fwds = df[df["position"] == "FWD"].head(25)
-
-    return pd.concat([top_gkps, top_defs, top_mids, top_fwds])
-
-# ------------------- Flask Routes -------------------
 @app.route("/")
 def home():
-    """
-    Redirect root to the Flutter web app.
-    """
-    from flask import redirect
     return redirect("/app/", code=302)
 
 
-@app.route("/legacy")
-def home_legacy():
-    """
-    Old Flask HTML interface (kept for reference).
-    """
-    user_id = request.args.get("user_id", default=3022850, type=int)
-    gameweek = fetch_current_gameweek()
-    if not gameweek:
-        return "Failed to fetch current gameweek."
-
-    data = get_cached_data()
-    if not data:
-        return "Failed to fetch player data."
-
-    players = {p["id"]: p for p in data["elements"]}
-    picks = fetch_gameweek_picks(user_id, gameweek)
-    if not picks:
-        return "Failed to fetch gameweek picks."
-
-    # Organize
-    lineup, bench = organize_team(picks["picks"], players)
-
-    # Extract player ids from lineup/bench
-    player_ids = [
-        p["id"] for position in lineup.values() for p in position
-    ] + [p["id"] for p in bench]
-    starting_eleven_ids = [
-        p["id"] for position in lineup.values() for p in position
-    ]
-
-    # Build DataFrame
-    user_players_df = get_player_dataframe(player_ids, starting_eleven_ids)
-    top_players_df = print_top_players()
-
-    # Render
-    return render_template(
-        "formation_with_bench.html",
-        starting_lineup=lineup,
-        bench=bench,
-        user_id=user_id,
-        user_players_df=user_players_df,
-        top_players_df=top_players_df
-    )
-
-@app.route("/players")
-def players_page():
-    """
-    Renders a page for searching players.
-    """
-    return render_template("player_search.html")
-
 @app.route("/api/players", methods=["GET"])
 def players_data():
-    """
-    API endpoint to return players (with FCPS).
-    Query params:
-      - player_id: get one specific player
-      - min_fcps, max_fcps: filter by FCPS range
-    """
-    data = fetch_player_data()
-    if not data:
-        return jsonify({"error": "Failed to fetch player data"}), 500
+    """All players, projected. Optional `player_id`, `position`, `max_price`, `engine`."""
+    horizon = _int_arg("horizon", 5, 1, service.MAX_HORIZON)
+    projection_set = service.projections_for(horizon, _engine_arg())
+    projections, data = projection_set.projections, projection_set.data
+    fcps_scores, _data = service.fcps_for()
+    teams = {int(t["id"]): t.get("short_name", "UNK") for t in data.get("teams", [])}
 
-    fixtures = fetch_fixtures_data()
-    if fixtures is None:
-        return jsonify({"error": "Failed to fetch fixture data"}), 500
-
-    current_gameweek = fetch_current_gameweek()
-    if not current_gameweek:
-        return jsonify({"error": "Failed to fetch current gameweek"}), 500
-
-    team_abbreviations = {team["id"]: team["short_name"] for team in data["teams"]}
-    players = {p["id"]: p for p in data["elements"]}
-    team_fixtures = build_team_fixtures(fixtures, current_gameweek)
-    normalization_values = get_normalization_values()
+    meta = fpl_client.meta({"engine": projection_set.engine})
 
     player_id = request.args.get("player_id", type=int)
-    min_fcps = request.args.get("min_fcps", default=None, type=float)
-    max_fcps = request.args.get("max_fcps", default=None, type=float)
+    if player_id is not None:
+        element = next(
+            (p for p in data.get("elements", []) if int(p["id"]) == player_id), None
+        )
+        if element is None or player_id not in projections:
+            return jsonify({"code": "player_not_found", "error": "Player not found"}), 404
+        payload = _player_payload(
+            element,
+            teams.get(int(element.get("team", 0)), "UNK"),
+            projections[player_id],
+            fcps_scores.get(player_id),
+        )
+        return jsonify({"data": [payload], "meta": meta})
 
-    # If a single player_id is provided:
-    if player_id:
-        player = players.get(player_id)
-        if player:
-            team_id = player["team"]
-            next_3_fdr = calculate_next_3_fdr(team_id, team_fixtures, current_gameweek)
-            single_data = [{
-                "id": player["id"],
-                "name": f"{player['first_name']} {player['second_name']}",
-                "team": team_abbreviations.get(team_id, "UNK"),
-                "position": POSITION_MAP[player["element_type"]],
-                "price": player["now_cost"] / 10,
-                "total_points": player["total_points"],
-                "form": player["form"],
-                "selected_by_percent": player["selected_by_percent"],
-                "status": STATUS_MAP.get(player["status"], "Unknown"),
-                "next_3_fdr": next_3_fdr,
-                "ict_index": player["ict_index"],
-                "photo": f"{request.host_url}api/photo/{player['code']}"
-            }]
-            df = pd.DataFrame(single_data)
-            df = calculate_fcps(df, max_values=normalization_values)
-            return jsonify({"data": df.to_dict(orient="records")})
-        else:
-            return jsonify({"error": "Player not found"}), 404
+    position = request.args.get("position")
+    max_price = request.args.get("max_price", type=float)
 
-    # Otherwise, return data for all players
-    player_list = []
-    for pl in players.values():
-        team_id = pl["team"]
-        next_3_fdr = calculate_next_3_fdr(team_id, team_fixtures, current_gameweek)
+    payloads = []
+    for element in data.get("elements", []):
+        pid = int(element["id"])
+        projection = projections.get(pid)
+        if projection is None:
+            continue
+        if position and rules.position_of(element) != position.upper():
+            continue
+        if max_price is not None and int(element.get("now_cost", 0)) / 10 > max_price:
+            continue
+        payloads.append(
+            _player_payload(
+                element,
+                teams.get(int(element.get("team", 0)), "UNK"),
+                projection,
+                fcps_scores.get(pid),
+            )
+        )
 
-        player_list.append({
-            "id": pl["id"],
-            "name": f"{pl['first_name']} {pl['second_name']}",
-            "team": team_abbreviations.get(team_id, "UNK"),
-            "position": POSITION_MAP[pl["element_type"]],
-            "price": pl["now_cost"] / 10,
-            "total_points": pl["total_points"],
-            "form": pl["form"],
-            "selected_by_percent": pl["selected_by_percent"],
-            "status": STATUS_MAP.get(pl["status"], "Unknown"),
-            "next_3_fdr": next_3_fdr,
-            "ict_index": pl["ict_index"],
-            "photo": f"{request.host_url}api/photo/{pl['code']}"
-        })
-
-    df = pd.DataFrame(player_list)
-    numeric_columns = ["total_points", "form", "next_3_fdr", "ict_index"]
-    for col in numeric_columns:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    df = calculate_fcps(df, max_values=normalization_values)
-
-    # FCPS Filters
-    if min_fcps is not None:
-        df = df[df["fcps"] >= min_fcps]
-    if max_fcps is not None:
-        df = df[df["fcps"] <= max_fcps]
-
-    return jsonify({"data": df.to_dict(orient="records")})
-
-@app.route("/api/fixtures")
-def fixtures_data():
-    """
-    API endpoint to return fixture data.
-    """
-    fixtures = fetch_fixtures_data()
-    if fixtures is None:
-        return jsonify({"error": "Failed to fetch fixture data"}), 500
-
-    data = fetch_player_data()
-    if not data:
-        return jsonify({"error": "Failed to fetch player data for team abbreviations"}), 500
-
-    team_abbreviations = {team["id"]: team["short_name"] for team in data["teams"]}
-
-    fixture_list = []
-    for fixture in fixtures:
-        fixture_list.append({
-            "gameweek": fixture["event"],
-            "home_team": team_abbreviations.get(fixture["team_h"], "UNK"),
-            "away_team": team_abbreviations.get(fixture["team_a"], "UNK"),
-            "team_h_difficulty": fixture["team_h_difficulty"],
-            "team_a_difficulty": fixture["team_a_difficulty"],
-        })
-
-    return jsonify(fixture_list)
-
-_photo_cache = {}  # in-memory cache: code -> bytes
-
-@app.route("/api/photo/<int:code>")
-def player_photo(code):
-    """
-    Proxy player photos from the PL CDN through our domain.
-    This bypasses Safari ITP and other cross-origin restrictions on the client side.
-    Images are cached in memory after the first fetch.
-    """
-    from flask import Response
-    if code in _photo_cache:
-        return Response(_photo_cache[code], mimetype="image/png",
-                        headers={"Cache-Control": "public, max-age=86400"})
-    try:
-        url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{code}.png"
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            _photo_cache[code] = r.content
-            return Response(r.content, mimetype="image/png",
-                            headers={"Cache-Control": "public, max-age=86400"})
-    except Exception:
-        pass
-    return "", 404
-
-
-def entry_exists(entry_id):
-    """
-    Whether an FPL entry resolves this season. Entry IDs are reissued each
-    season, so an ID saved last year stops resolving.
-    """
-    url = f"https://fantasy.premierleague.com/api/entry/{entry_id}/"
-    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-    return resp.status_code != 404
-
-
-@app.route("/api/entry/<int:entry_id>")
-def get_entry(entry_id):
-    """
-    Proxy the FPL entry endpoint so Flutter can look up a manager's
-    name/team without hitting FPL directly (avoids CORS in web builds).
-    """
-    try:
-        url = f"https://fantasy.premierleague.com/api/entry/{entry_id}/"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code == 404:
-            return jsonify({"code": "entry_not_found", "error": "Entry not found"}), 404
-        if resp.status_code != 200:
-            return jsonify({"error": f"FPL API returned {resp.status_code}"}), 502
-        data = resp.json()
-        return jsonify({
-            "id": data["id"],
-            "manager_name": f"{data['player_first_name']} {data['player_last_name']}",
-            "team_name": data.get("name", ""),
-            "region": data.get("player_region_name", ""),
-            "overall_points": data.get("summary_overall_points", 0),
-            "overall_rank": data.get("summary_overall_rank", 0),
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    payloads.sort(key=lambda p: (-p["xpts_horizon"], p["id"]))
+    return jsonify({"data": payloads, "meta": meta})
 
 
 @app.route("/api/team")
 def team_data():
-    """
-    JSON API for the Flutter app: returns the user's current team
-    (formation + bench) with full player stats and FCPS scores.
-    """
-    user_id = request.args.get("user_id", default=3022850, type=int)
-    season = get_season_state()
-    if not season:
-        return jsonify({"error": "Failed to fetch current gameweek"}), 500
+    """The user's current squad, with projections."""
+    user_id = _int_arg("user_id", 3022850)
+    horizon = _int_arg("horizon", 5, 1, service.MAX_HORIZON)
 
-    if not season["started"]:
+    state = fpl_client.season_state()
+    if not state:
+        return jsonify(
+            {"code": "upstream_unavailable", "error": "Failed to fetch gameweek state"}
+        ), 503
+
+    if not state["started"]:
         # No picks exist for anyone yet, so a stale ID would otherwise stay
         # hidden until the deadline passes. Surface it now.
-        if not entry_exists(user_id):
-            return jsonify({
+        if fpl_client.entry(user_id) is None:
+            return jsonify(
+                {
+                    "code": "entry_not_found",
+                    "error": f"No FPL team found with ID {user_id} this season.",
+                }
+            ), 404
+        return jsonify(
+            {
+                "code": "season_not_started",
+                "error": "The season hasn't kicked off yet.",
+                "gameweek": state["gameweek"],
+                "gameweek_name": state["gameweek_name"],
+                "deadline": state["deadline"],
+            }
+        ), 503
+
+    picks_payload = fpl_client.picks(user_id, state["gameweek"])
+    if not picks_payload or not picks_payload.get("picks"):
+        return jsonify(
+            {
                 "code": "entry_not_found",
-                "error": f"No FPL team found with ID {user_id} this season.",
-            }), 404
-        return jsonify({
-            "code": "season_not_started",
-            "error": "The season hasn't kicked off yet.",
-            "gameweek": season["gameweek"],
-            "gameweek_name": season["gameweek_name"],
-            "deadline": season["deadline"],
-        }), 503
+                "error": "Failed to fetch gameweek picks. Check the user ID.",
+            }
+        ), 404
 
-    data = get_cached_data()
-    if not data:
-        return jsonify({"error": "Failed to fetch player data"}), 500
+    projection_set = service.projections_for(horizon, _engine_arg())
+    projections, data = projection_set.projections, projection_set.data
+    fcps_scores, _data = service.fcps_for()
+    elements = {int(p["id"]): p for p in data.get("elements", [])}
+    teams = {int(t["id"]): t.get("short_name", "UNK") for t in data.get("teams", [])}
 
-    players = {p["id"]: p for p in data["elements"]}
-    picks = fetch_gameweek_picks(user_id, season["gameweek"])
-    if not picks:
-        return jsonify({
-            "code": "entry_not_found",
-            "error": "Failed to fetch gameweek picks. Check the user ID.",
-        }), 404
+    lineup = {"GKP": [], "DEF": [], "MID": [], "FWD": []}
+    bench = []
+    for pick in picks_payload["picks"]:
+        element = elements.get(int(pick["element"]))
+        if element is None:
+            continue
+        projection = projections.get(int(element["id"]), {})
+        payload = _player_payload(
+            element,
+            teams.get(int(element.get("team", 0)), "UNK"),
+            projection,
+            fcps_scores.get(int(element["id"])),
+        )
+        payload.update(
+            {
+                "is_captain": bool(pick.get("is_captain")),
+                "is_vice_captain": bool(pick.get("is_vice_captain")),
+                "starting_eleven": int(pick.get("multiplier", 0)) > 0,
+            }
+        )
+        if payload["starting_eleven"] and payload["position"] in lineup:
+            lineup[payload["position"]].append(payload)
+        else:
+            bench.append(payload)
 
-    # Organise into lineup/bench
-    lineup, bench = organize_team(picks["picks"], players)
-
-    # Get all player IDs for FCPS calculation
-    starting_eleven_ids = [p["id"] for pos in lineup.values() for p in pos]
-    bench_ids = [p["id"] for p in bench]
-    all_ids = starting_eleven_ids + bench_ids
-
-    # Build DataFrame with FCPS
-    df = get_player_dataframe(all_ids, starting_eleven_ids)
-    fcps_map = {}
-    next_3_fdr_map = {}
-    if not df.empty:
-        fcps_map = dict(zip(df["id"], df["fcps"]))
-        next_3_fdr_map = dict(zip(df["id"], df["next_3_fdr"]))
-
-    def enrich(player_data):
-        pid = player_data["id"]
-        raw = players.get(pid, {})
-        return {
-            **player_data,
-            "price": raw.get("now_cost", 0) / 10,
-            "total_points": raw.get("total_points", 0),
-            "form": float(raw.get("form", 0)),
-            "selected_by_percent": float(raw.get("selected_by_percent", 0)),
-            "ict_index": float(raw.get("ict_index", 0)),
-            "next_3_fdr": int(next_3_fdr_map.get(pid, 0)),
-            "team": next(
-                (t["short_name"] for t in data["teams"] if t["id"] == raw.get("team")),
-                "UNK",
+    history = picks_payload.get("entry_history") or {}
+    return jsonify(
+        {
+            "gameweek": state["gameweek"],
+            "deadline": state["deadline"],
+            "user_id": user_id,
+            "lineup": lineup,
+            "bench": bench,
+            "bank": history.get("bank"),
+            "squad_value": history.get("value"),
+            "active_chip": picks_payload.get("active_chip"),
+            "engine": projection_set.engine,
+            "meta": fpl_client.meta(
+                {"gameweek": state["gameweek"], "engine": projection_set.engine}
             ),
-            "fcps": round(fcps_map.get(pid, 0), 1),
         }
-
-    enriched_lineup = {
-        pos: [enrich(p) for p in players_list]
-        for pos, players_list in lineup.items()
-    }
-    enriched_bench = [enrich(p) for p in bench]
-
-    return jsonify({
-        "gameweek": season["gameweek"],
-        "user_id": user_id,
-        "lineup": enriched_lineup,
-        "bench": enriched_bench,
-    })
+    )
 
 
-@app.route("/trade_recommendations", methods=["GET", "POST"])
-def trade_recommendations():
+@app.route("/api/recommendations")
+def recommendations():
+    """Rules-legal transfer advice. `engine=xpts|ml|blend` picks the scorer."""
+    user_id = request.args.get("user_id", type=int)
+    if user_id is None:
+        return jsonify({"code": "missing_user_id", "error": "user_id is required"}), 400
+
+    result = service.recommendations(
+        entry_id=user_id,
+        horizon=_int_arg("horizon", service.DEFAULT_HORIZON, 1, service.MAX_HORIZON),
+        max_transfers=_int_arg("max_transfers", service.MAX_SEARCH_TRANSFERS, 0, 3),
+        free_transfers_override=_int_arg("free_transfers", None, 0, 5),
+        bank_override=_int_arg("bank", None, 0),
+        include_hits=_bool_arg("include_hits", True),
+        engine=_engine_arg(),
+    )
+
+    # Strictly additive: a failure here leaves the response unchanged.
+    narrative.annotate(result["plans"])
+    return jsonify(result)
+
+
+@app.route("/api/fcps-recommendations", methods=["GET", "POST"])
+def fcps_recommendations():
+    """FCPS transfer advice, written by the language model.
+
+    This is the route that used to be ``/trade_recommendations``. Its GET handler
+    rendered a template that was never committed, so every GET was a 500, and its
+    POST handler was never called by the shipped client. It is JSON on both verbs
+    now, and the Flutter app calls it.
+
+    ``user_id`` may arrive as a query parameter or a form field, so the old POST
+    call shape still works.
     """
-    Route to display trade recommendations for the user's fantasy team.
-    """
-    if request.method == "POST":
+    user_id = request.args.get("user_id", type=int)
+    if user_id is None and request.form:
         try:
-            # Fetch cached data and top players
-            data = get_cached_data()
-            if not data:
-                return jsonify({"error": "Failed to fetch player data"}), 500
+            user_id = int(request.form.get("user_id", ""))
+        except (TypeError, ValueError):
+            user_id = None
+    if user_id is None:
+        return jsonify({"code": "missing_user_id", "error": "user_id is required"}), 400
 
-            top_players_df = print_top_players()
-            user_id = request.form.get("user_id", 3022850)  # Default user ID if not provided
-            gameweek = fetch_current_gameweek()
-            if not gameweek:
-                return jsonify({"error": "Failed to fetch current gameweek"}), 500
-
-            picks = fetch_gameweek_picks(user_id, gameweek)
-            if not picks:
-                return jsonify({"error": "Failed to fetch gameweek picks"}), 500
-
-            # Extract player data for the user's team
-            player_ids = [pick["element"] for pick in picks["picks"]]
-            starting_eleven_ids = [pick["element"] for pick in picks["picks"] if pick["multiplier"] > 0]
-            user_players_df = get_player_dataframe(player_ids, starting_eleven_ids)
-
-            # Call the recommendation function
-            recommendation = get_trade_recommendations(user_players_df, top_players_df)
-
-            # Return the recommendation as JSON
-            return jsonify({"recommendation": recommendation})
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    # Render the HTML template for GET request
-    return render_template("trade_recommendations.html")
+    return jsonify(
+        service.fcps_advice(entry_id=user_id, refresh=_bool_arg("refresh", False))
+    )
 
 
-# ------------------- Flutter App Serving -------------------
-import os as _os
-from flask import send_from_directory as _send_from_directory
+@app.route("/api/engines")
+def engines():
+    """What this deployment can actually do, so the client stops guessing.
 
-FLUTTER_BUILD_DIR = _os.path.join(_os.path.dirname(__file__), "flutter_web")
+    The engine picker, the FCPS button and the "trained on" caption are all
+    driven by this. Without it the client either hides working features or offers
+    broken ones, and both were happening.
+    """
+    return jsonify(
+        {
+            "scoring": ml_scorer.describe(),
+            "fcps": {
+                "available": fcps_llm.is_configured(),
+                "model": fcps_llm.model_name(),
+                "reason": None
+                if fcps_llm.is_configured()
+                else "No OpenAI API key is configured on this server.",
+            },
+            "narrative": {"available": narrative.is_enabled()},
+            "meta": fpl_client.meta(),
+        }
+    )
+
+
+@app.route("/api/captain")
+def captain_picks():
+    """Rank the manager's squad for the armband."""
+    user_id = request.args.get("user_id", type=int)
+    if user_id is None:
+        return jsonify({"code": "missing_user_id", "error": "user_id is required"}), 400
+
+    state = fpl_client.season_state()
+    if not state or not state["started"]:
+        return jsonify(
+            {
+                "code": "season_not_started",
+                "error": "Captain picks start once the season is under way.",
+            }
+        ), 503
+
+    squad_state = service.load_squad_state(user_id, state["gameweek"])
+    projection_set = service.projections_for(1, _engine_arg())
+    projections, data = projection_set.projections, projection_set.data
+    teams = {int(t["id"]): t for t in data.get("teams", [])}
+    event = next(
+        (e for e in data.get("events", []) if int(e["id"]) == state["gameweek"]), {}
+    )
+
+    result = captain_engine.rank_captains(
+        squad=squad_state["squad"],
+        picks=squad_state["picks"],
+        projections=projections,
+        teams=teams,
+        gameweek=state["gameweek"],
+        most_captained=event.get("most_captained"),
+    )
+    result["engine"] = projection_set.engine
+    result["meta"] = fpl_client.meta(
+        {"gameweek": state["gameweek"], "engine": projection_set.engine}
+    )
+    return jsonify(result)
+
+
+@app.route("/api/price-changes")
+def price_changes():
+    """Tonight's likely risers and fallers, framed against the user's squad."""
+    data = fpl_client.bootstrap()
+    total_players = int(data.get("total_players", 0) or 0)
+
+    squad_ids = None
+    user_id = request.args.get("user_id", type=int)
+    if user_id is not None:
+        state = fpl_client.season_state()
+        if state and state["started"]:
+            picks_payload = fpl_client.picks(user_id, state["gameweek"])
+            if picks_payload and picks_payload.get("picks"):
+                squad_ids = [int(p["element"]) for p in picks_payload["picks"]]
+
+    result = prices.predict_all(
+        data.get("elements", []), total_players, squad_ids=squad_ids
+    )
+    result["meta"] = fpl_client.meta()
+    return jsonify(result)
+
+
+@app.route("/api/fixture-ticker")
+def fixture_ticker():
+    """Team x gameweek difficulty grid, with named fixture swings."""
+    state = fpl_client.season_state()
+    if not state:
+        return jsonify(
+            {"code": "upstream_unavailable", "error": "Failed to fetch gameweek state"}
+        ), 503
+
+    start = _int_arg("start", state["gameweek"], 1, 38)
+    count = _int_arg("count", 6, 1, 12)
+
+    data = fpl_client.bootstrap()
+    result = ticker.build_ticker(
+        fpl_client.fixtures() or [], data.get("teams", []), start, count
+    )
+    result["meta"] = fpl_client.meta({"gameweek": state["gameweek"]})
+    return jsonify(result)
+
+
+@app.route("/api/fixtures")
+def fixtures_data():
+    """Raw fixture list. Kept for compatibility; prefer /api/fixture-ticker."""
+    fixtures = fpl_client.fixtures()
+    data = fpl_client.bootstrap()
+    teams = {int(t["id"]): t.get("short_name", "UNK") for t in data.get("teams", [])}
+    return jsonify(
+        [
+            {
+                "gameweek": fixture.get("event"),
+                "home_team": teams.get(int(fixture["team_h"]), "UNK"),
+                "away_team": teams.get(int(fixture["team_a"]), "UNK"),
+                "team_h_difficulty": fixture.get("team_h_difficulty"),
+                "team_a_difficulty": fixture.get("team_a_difficulty"),
+                "kickoff_time": fixture.get("kickoff_time"),
+                "finished": fixture.get("finished", False),
+            }
+            for fixture in (fixtures or [])
+        ]
+    )
+
+
+@app.route("/api/entry/<int:entry_id>")
+def get_entry(entry_id):
+    """Manager name / team / rank, for first-run confirmation."""
+    data = fpl_client.entry(entry_id)
+    if data is None:
+        return jsonify({"code": "entry_not_found", "error": "Entry not found"}), 404
+    return jsonify(
+        {
+            "id": data["id"],
+            "manager_name": f"{data.get('player_first_name', '')} "
+            f"{data.get('player_last_name', '')}".strip(),
+            "team_name": data.get("name", ""),
+            "region": data.get("player_region_name", ""),
+            "overall_points": data.get("summary_overall_points", 0),
+            "overall_rank": data.get("summary_overall_rank", 0),
+            "bank": data.get("last_deadline_bank"),
+            "squad_value": data.get("last_deadline_value"),
+        }
+    )
+
+
+@app.route("/api/photo/<int:code>")
+def player_photo(code):
+    """Proxy player photos through our domain.
+
+    Bypasses Safari ITP and other cross-origin restrictions on the client side.
+    """
+    content = fpl_client.photo(code)
+    if content is None:
+        return "", 404
+    return Response(
+        content,
+        mimetype="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+# ------------------------------------------------------------------ Flutter app
+
+FLUTTER_BUILD_DIR = os.path.join(os.path.dirname(__file__), "flutter_web")
+
 
 @app.route("/app")
 @app.route("/app/")
 def flutter_index():
-    """Serve the Flutter web app index page."""
-    return _send_from_directory(FLUTTER_BUILD_DIR, "index.html")
+    return send_from_directory(FLUTTER_BUILD_DIR, "index.html")
+
 
 @app.route("/app/<path:filename>")
 def flutter_static(filename):
-    """Serve Flutter web static assets."""
-    return _send_from_directory(FLUTTER_BUILD_DIR, filename)
+    return send_from_directory(FLUTTER_BUILD_DIR, filename)
 
 
-# ------------------- Main Runner -------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5001))  # Default to 5001 if not set
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5001)))

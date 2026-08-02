@@ -1,0 +1,20 @@
+# Offline training dependencies. NOT installed on the web dyno.
+#
+# The Flask process needs numpy, scikit-learn and joblib only to *score* with a
+# persisted artifact — see `ml/predict.py`. It never imports pandas, and it
+# starts and serves normally with none of this installed, falling back to
+# `engine.xpts`. Install these where you train:
+#
+#     pip install -r requirements.txt -r requirements-ml.txt
+#     python -m ml.sources && python -m ml.train && python -m ml.backtest
+#
+-r requirements.txt
+
+numpy==2.1.3
+pandas==2.2.3
+scikit-learn==1.5.2
+joblib==1.4.2
+
+# Parquet cache for the assembled panel. Optional: ml/panel.py falls back to
+# rebuilding from CSV when it's absent.
+pyarrow==17.0.0
