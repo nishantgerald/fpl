@@ -12,6 +12,28 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+@pytest.fixture(autouse=True)
+def _never_touch_real_llm_state(monkeypatch, tmp_path):
+    """Keep every test out of the operator's real LLM budget and cache.
+
+    Both live under ``~/.cache/fpl`` by default. Any test that reaches
+    ``fcps_llm.call_model`` or ``narrative`` reserves against the global daily
+    ceiling, so without this the suite silently spends the day's allowance and
+    the counter climbs with no model calls behind it. Applied here rather than
+    per-file so a new test file inherits the isolation instead of having to
+    remember it.
+
+    Imported inside the fixture: importing engine modules at conftest import
+    time would run before ``sys.path`` is set up for some invocations.
+    """
+    from engine import fcps_llm, llm_budget, narrative
+
+    monkeypatch.setattr(llm_budget, "STATE_DIR", tmp_path / "llm-budget")
+    monkeypatch.setattr(fcps_llm, "CACHE_DIR", tmp_path / "fcps-cache")
+    fcps_llm.clear_cache()
+    narrative.clear_cache()
+
+
 TEAM_IDS = list(range(1, 21))
 
 
