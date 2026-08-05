@@ -56,7 +56,9 @@ from engine import (
     research,
     rules,
     service,
+    squad_import,
     ticker,
+    vision,
 )
 
 # Once, at import — not inside a request handler, which is where the old code
@@ -1136,6 +1138,83 @@ def me_transfers():
             "meta": fpl_client.meta(),
         }
     )
+
+
+@app.errorhandler(vision.VisionUnavailable)
+def _handle_vision_unavailable(error):
+    return jsonify(error.to_dict()), error.status
+
+
+@app.errorhandler(squad_import.ImportError_)
+def _handle_import_error(error):
+    return jsonify({"code": error.code, "error": str(error)}), 400
+
+
+# Anonymous, so throttled harder than the authenticated routes: each call costs
+# a model invocation against the operator's own subscription, and the whole
+# point of the feature is that a stranger can use it without signing up.
+_IMPORT_LIMIT = int(os.getenv("IMPORT_ATTEMPTS_PER_WINDOW", 5))
+_IMPORT_WINDOW_SECONDS = int(os.getenv("IMPORT_WINDOW_SECONDS", 900))
+_import_attempts: dict[str, list[float]] = {}
+
+
+def _import_throttled(client: str) -> bool:
+    now = time.time()
+    window = [
+        t for t in _import_attempts.get(client, []) if now - t < _IMPORT_WINDOW_SECONDS
+    ]
+    if len(window) >= _IMPORT_LIMIT:
+        _import_attempts[client] = window
+        return True
+    window.append(now)
+    _import_attempts[client] = window
+    return False
+
+
+@app.route("/api/import/screenshot", methods=["POST"])
+def import_screenshot():
+    """Read a squad out of an uploaded screenshot and rate it.
+
+    Deliberately unauthenticated. Team ID and the session connect both require
+    a visitor who is already committed; this is the on-ramp for someone who
+    arrived thirty seconds ago and wants to see whether the tool is any good.
+
+    Accepts a multipart file or a base64 body, because a web file picker and a
+    mobile client naturally produce different things.
+    """
+    if not vision.is_configured():
+        return jsonify(
+            {
+                "code": "vision_not_configured",
+                "error": "Screenshot import isn't enabled on this server.",
+            }
+        ), 503
+    if _import_throttled(_client_id()):
+        return jsonify(
+            {
+                "code": "throttled",
+                "error": "Too many screenshots. Try again in a few minutes.",
+            }
+        ), 429
+
+    upload = request.files.get("image")
+    if upload is not None:
+        payload, mime = upload.read(), (upload.mimetype or "")
+    else:
+        body = request.get_json(silent=True) or {}
+        payload, mime = body.get("image", ""), body.get("mime", "")
+    if not payload:
+        return jsonify({"code": "bad_image", "error": "No image was uploaded."}), 400
+
+    result = service.import_screenshot(payload, mime)
+    result["meta"] = fpl_client.meta()
+    return jsonify(result)
+
+
+@app.route("/api/import/config")
+def import_config():
+    """Whether the client should offer screenshot upload at all."""
+    return jsonify({"screenshot": vision.is_configured()})
 
 
 @app.route("/api/me/digest")

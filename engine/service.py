@@ -27,6 +27,7 @@ from . import fcps_llm, fpl_client, reconstruct, research
 from . import leagues as leagues_mod
 from . import captain as captain_mod
 from . import digest
+from . import squad_import, vision
 from . import free_transfers as ft_mod
 from . import ml_scorer, money, optimizer, rules
 
@@ -50,6 +51,54 @@ class ServiceError(Exception):
 
 
 # ---------------------------------------------------------------- squad state
+
+
+def import_screenshot(image: bytes, mime: str = "") -> dict:
+    """Read a squad out of a screenshot and rate it.
+
+    The vision call reads names and nothing else. Resolution and scoring are
+    ordinary code against the bootstrap, so the only thing trusted to a model
+    is the one thing a model is uniquely good at.
+    """
+    raw = squad_import.decode_image(image, mime)
+    text = vision.read_image(raw, squad_import.VISION_PROMPT)
+    names = squad_import.parse_vision_output(text)
+    if not names:
+        raise ServiceError(
+            "no_players_found",
+            "No player names could be read from that screenshot. Try a fuller "
+            "screenshot of the pitch view.",
+            status=422,
+        )
+
+    projection = projections_for(DEFAULT_HORIZON, ml_scorer.DEFAULT_ENGINE)
+    elements = projection.data.get("elements", [])
+    matched, unresolved = squad_import.resolve_names(names, elements)
+    if not matched:
+        raise ServiceError(
+            "no_players_matched",
+            "Some names were read but none matched a Premier League player.",
+            status=422,
+        )
+
+    optimal = None
+    try:
+        best = draft_squad(horizon=DEFAULT_HORIZON)
+        optimal = float((best.get("squad") or {}).get("horizon_xpts") or 0.0) or None
+    except Exception:
+        # A rating without a benchmark is still useful; the verdict drops the
+        # comparison rather than the whole response.
+        optimal = None
+
+    rating = squad_import.rate(
+        matched,
+        projection.projections,
+        {int(e["id"]): e for e in elements},
+        optimal_xpts=optimal,
+    )
+    rating["unresolved"] = unresolved
+    rating["read_count"] = len(names)
+    return rating
 
 
 def deadline_digest(entry_id: int, manager_name: str = "") -> dict:
