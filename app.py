@@ -20,18 +20,37 @@ See ``PRDs/`` in the Flutter repo for the specifications behind each endpoint,
 and ``PRDs/ml-methodology.md`` for how the trained model was built and validated.
 """
 
+import base64
+import json
 import os
+import secrets
+import time
+from urllib.parse import urlencode
 
+import requests
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, redirect, request, send_from_directory
 from flask_cors import CORS
 
 from engine import captain as captain_engine
-from engine import fcps_llm, fpl_client, ml_scorer, narrative, prices, rules, service, ticker
+from engine import (
+    accounts,
+    fcps_llm,
+    fpl_client,
+    llm_budget,
+    ml_scorer,
+    narrative,
+    prices,
+    research,
+    rules,
+    service,
+    ticker,
+)
 
 # Once, at import — not inside a request handler, which is where the old code
 # called it.
 load_dotenv()
+accounts.init_db()
 
 app = Flask(__name__)
 
@@ -66,6 +85,65 @@ def _reset_freshness():
 @app.errorhandler(service.ServiceError)
 def _handle_service_error(error):
     return jsonify(error.to_dict()), error.status
+
+
+def _team_games_played() -> int | None:
+    """League games played so far, for reporting whether the ML engine is live.
+
+    Best-effort: this decorates a status response, so an upstream hiccup should
+    leave the field absent rather than fail the request.
+    """
+    from engine import xpts
+
+    try:
+        data = fpl_client.bootstrap()
+        return xpts.team_games_played(data.get("teams", []), data.get("events", []))
+    except Exception:
+        return None
+
+
+def _client_id() -> str:
+    """Best available identifier for the caller, for per-client throttling.
+
+    ``X-Forwarded-For`` is attacker-controlled unless a trusted proxy is known to
+    overwrite it, so it is ignored by default: honouring it on a directly-exposed
+    app would let anyone mint a fresh identity per request and walk straight past
+    the limit. Set ``TRUST_PROXY_HEADER=true`` only when a reverse proxy in front
+    of this app rewrites the header.
+    """
+    trust = os.getenv("TRUST_PROXY_HEADER", "false").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if trust:
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            # Left-most entry is the originating client per the convention.
+            return forwarded.split(",")[0].strip()
+    return request.remote_addr or ""
+
+
+# Auth endpoints attract password-guessing the moment they exist. A sliding
+# in-memory window per client is the right weight for one process; it resets on
+# restart, which for brute-force protection is acceptable — the attacker's
+# progress resets with it.
+_AUTH_ATTEMPT_LIMIT = int(os.getenv("AUTH_ATTEMPTS_PER_WINDOW", 10))
+_AUTH_WINDOW_SECONDS = int(os.getenv("AUTH_WINDOW_SECONDS", 900))
+_auth_attempts: dict[str, list[float]] = {}
+
+
+def _auth_throttled(client: str) -> bool:
+    import time as _time
+
+    now = _time.time()
+    window = [t for t in _auth_attempts.get(client, []) if now - t < _AUTH_WINDOW_SECONDS]
+    if len(window) >= _AUTH_ATTEMPT_LIMIT:
+        _auth_attempts[client] = window
+        return True
+    window.append(now)
+    _auth_attempts[client] = window
+    return False
 
 
 @app.errorhandler(fcps_llm.FcpsUnavailable)
@@ -250,46 +328,119 @@ def players_data():
     return jsonify({"data": payloads, "meta": meta})
 
 
-@app.route("/api/team")
-def team_data():
-    """The user's current squad, with projections."""
-    user_id = _int_arg("user_id", 3022850)
-    horizon = _int_arg("horizon", 5, 1, service.MAX_HORIZON)
+@app.route("/api/player/<int:player_id>/projection")
+def player_projection(player_id):
+    """The gameweek-by-gameweek breakdown behind one player's horizon xPts.
 
+    A separate route rather than a field on `/api/players`: the components are
+    nine floats per gameweek per player, which would grow the list payload by
+    an order of magnitude to serve a panel that is only ever open for one
+    player at a time.
+    """
+    horizon = _int_arg("horizon", service.DEFAULT_HORIZON, 1, service.MAX_HORIZON)
+    projection_set = service.projections_for(horizon, _engine_arg())
+    projection = projection_set.projections.get(player_id)
+
+    element = next(
+        (
+            p
+            for p in projection_set.data.get("elements", [])
+            if int(p["id"]) == player_id
+        ),
+        None,
+    )
+    if projection is None or element is None:
+        return jsonify({"code": "player_not_found", "error": "Player not found"}), 404
+
+    return jsonify(
+        {
+            "id": player_id,
+            "web_name": element.get("web_name", ""),
+            "horizon": horizon,
+            "horizon_xpts": projection.get("horizon_xpts", 0.0),
+            "per_gameweek": projection.get("per_gameweek", []),
+            "engine": projection_set.engine,
+            "meta": fpl_client.meta({"engine": projection_set.engine}),
+        }
+    )
+
+
+@app.route("/api/session")
+def session_state():
+    """Whether the stored FPL session cookie still works.
+
+    Exists to be polled by a scheduled check: a cookie fails silently, and the
+    default way to discover that is a team screen that quietly stopped
+    updating. Reports state only — never any part of the cookie itself.
+    """
+    user_id = _int_arg("user_id", 3022850)
+    status = fpl_client.session_status(user_id)
+    # `ok: false` here is a truthful report, not a failed request, so the route
+    # is a 200 and the caller reads `state`.
+    return jsonify({"user_id": user_id, **status, "meta": fpl_client.meta()})
+
+
+def _team_response(user_id: int, horizon: int, cookie: str | None = None):
+    """Build the squad payload for one entry.
+
+    Shared by the single-user route (deployment-wide cookie) and the
+    per-account route (that user's own vaulted cookie) so the two can never
+    drift in shape. Returns ``(body, status)``.
+    """
     state = fpl_client.season_state()
     if not state:
-        return jsonify(
-            {"code": "upstream_unavailable", "error": "Failed to fetch gameweek state"}
-        ), 503
+        return {
+            "code": "upstream_unavailable",
+            "error": "Failed to fetch gameweek state",
+        }, 503
 
+    picks_payload = None
     if not state["started"]:
         # No picks exist for anyone yet, so a stale ID would otherwise stay
         # hidden until the deadline passes. Surface it now.
         if fpl_client.entry(user_id) is None:
-            return jsonify(
-                {
-                    "code": "entry_not_found",
-                    "error": f"No FPL team found with ID {user_id} this season.",
-                }
-            ), 404
-        return jsonify(
-            {
+            return {
+                "code": "entry_not_found",
+                "error": f"No FPL team found with ID {user_id} this season.",
+            }, 404
+        # A drafted squad does exist before the deadline — it just isn't public.
+        # With a session cookie we can read it; without one this is still a 503,
+        # exactly as before.
+        try:
+            picks_payload = fpl_client.my_team(user_id, cookie=cookie)
+        except fpl_client.NotAuthenticated as exc:
+            return {
                 "code": "season_not_started",
                 "error": "The season hasn't kicked off yet.",
+                "detail": str(exc),
                 "gameweek": state["gameweek"],
                 "gameweek_name": state["gameweek_name"],
                 "deadline": state["deadline"],
-            }
-        ), 503
+            }, 503
 
-    picks_payload = fpl_client.picks(user_id, state["gameweek"])
+    if picks_payload is None and state["started"] and cookie:
+        # In-season the cookie is still the best source — it sees the live
+        # draft for next gameweek, not the one locked at the last deadline.
+        # But it's an upgrade here, not a requirement: a dead cookie degrades
+        # to the public path rather than failing the request.
+        try:
+            picks_payload = fpl_client.my_team(user_id, cookie=cookie)
+        except fpl_client.NotAuthenticated:
+            picks_payload = None
+
+    if picks_payload is None and state["started"]:
+        # No cookie: fold post-deadline transfers into the last locked squad.
+        # Ownership changes are public and irreversible the moment they're
+        # made; only lineup choices wait for the deadline.
+        picks_payload = service.current_picks(user_id, state["gameweek"])
+
+    if picks_payload is None:
+        picks_payload = fpl_client.picks(user_id, state["gameweek"])
     if not picks_payload or not picks_payload.get("picks"):
-        return jsonify(
-            {
-                "code": "entry_not_found",
-                "error": "Failed to fetch gameweek picks. Check the user ID.",
-            }
-        ), 404
+        return {
+            "code": "entry_not_found",
+            "error": "Failed to fetch gameweek picks. Check the user ID.",
+        }, 404
 
     projection_set = service.projections_for(horizon, _engine_arg())
     projections, data = projection_set.projections, projection_set.data
@@ -323,22 +474,433 @@ def team_data():
             bench.append(payload)
 
     history = picks_payload.get("entry_history") or {}
+    return {
+        "gameweek": state["gameweek"],
+        "deadline": state["deadline"],
+        "user_id": user_id,
+        "lineup": lineup,
+        "bench": bench,
+        "bank": history.get("bank"),
+        "squad_value": history.get("value"),
+        "active_chip": picks_payload.get("active_chip"),
+        # Pre-deadline this squad is a draft the manager can still change,
+        # and the client says so rather than presenting it as settled. A
+        # reconstructed squad is provisional too — ownership is fact, but the
+        # lineup shown is last week's carried forward.
+        "provisional": picks_payload.get("source") in ("my_team", "reconstructed"),
+        "reconstructed": picks_payload.get("source") == "reconstructed",
+        "engine": projection_set.engine,
+        "meta": fpl_client.meta(
+            {"gameweek": state["gameweek"], "engine": projection_set.engine}
+        ),
+    }, 200
+
+
+@app.route("/api/team")
+def team_data():
+    """The user's current squad, with projections."""
+    user_id = _int_arg("user_id", 3022850)
+    horizon = _int_arg("horizon", 5, 1, service.MAX_HORIZON)
+    body, status = _team_response(user_id, horizon)
+    return jsonify(body), status
+
+
+# ------------------------------------------------------------------ accounts
+#
+# App accounts, not Premier League accounts. Users register with an email and
+# password *for this app* and link their FPL entry by Team ID — the model every
+# large FPL tool uses, because the public API serves squads, transfers and
+# leagues from the ID alone once the season starts. We never ask for, see, or
+# store a Premier League password. The optional extra is a per-user FPL session
+# cookie for pre-deadline squad reads, held encrypted and never returned.
+
+
+def _bearer_token() -> str | None:
+    header = request.headers.get("Authorization", "")
+    if header.lower().startswith("bearer "):
+        return header[7:].strip() or None
+    return None
+
+
+def _current_user() -> dict | None:
+    return accounts.user_for_token(_bearer_token())
+
+
+def _auth_required():
+    return jsonify({"code": "auth_required", "error": "Sign in first."}), 401
+
+
+# --- Google sign-in (server-side OAuth code flow) ---
+#
+# The redirect flow, not the JS popup: the browser goes to Google, Google
+# comes back to /callback with a one-time code, and this server exchanges it
+# for the identity — so the client secret never ships in the bundle and the
+# Flutter app needs no Google SDK. The id_token arrives directly from
+# Google's token endpoint over TLS, which is why decoding it without a
+# signature check is sound here; a token *presented by a client* could never
+# be trusted that way.
+
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+_GOOGLE_STATE_TTL = 600
+_google_states: dict[str, float] = {}
+
+
+def _google_client():
+    return (
+        os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip(),
+        os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip(),
+    )
+
+
+def _google_redirect_uri() -> str:
+    base = request.host_url.rstrip("/")
+    # Behind Heroku's router the request looks like http; Google requires the
+    # registered https URI to match exactly. Localhost is the one place plain
+    # http is legitimate (and what Google's console allows).
+    if "localhost" not in base and "127.0.0.1" not in base:
+        base = "https://" + base.split("://", 1)[1]
+    return f"{base}/api/auth/google/callback"
+
+
+def _decode_jwt_payload(token: str) -> dict:
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload))
+
+
+@app.route("/api/auth/config")
+def auth_config():
+    """What sign-in options this deployment offers, so the client can hide
+    buttons that would dead-end."""
+    return jsonify({"google": bool(_google_client()[0])})
+
+
+@app.route("/api/auth/google/start")
+def google_start():
+    client_id, client_secret = _google_client()
+    if not client_id or not client_secret:
+        return jsonify(
+            {"code": "google_not_configured", "error": "Google sign-in isn't set up."}
+        ), 503
+
+    now = time.time()
+    for stale in [s for s, exp in _google_states.items() if exp < now]:
+        _google_states.pop(stale, None)
+    state = secrets.token_urlsafe(24)
+    _google_states[state] = now + _GOOGLE_STATE_TTL
+
+    return redirect(
+        GOOGLE_AUTH_URL
+        + "?"
+        + urlencode(
+            {
+                "client_id": client_id,
+                "redirect_uri": _google_redirect_uri(),
+                "response_type": "code",
+                "scope": "openid email",
+                "state": state,
+                "prompt": "select_account",
+            }
+        )
+    )
+
+
+@app.route("/api/auth/google/callback")
+def google_callback():
+    # Errors land back in the app as a query code, not a JSON wall: the user
+    # is mid-redirect in a browser, not a JSON consumer.
+    def fail(code):
+        return redirect(f"/app/#/account?auth_error={code}")
+
+    if _google_states.pop(request.args.get("state", ""), None) is None:
+        return fail("state_mismatch")
+    code = request.args.get("code")
+    if not code:
+        return fail(request.args.get("error", "cancelled"))
+
+    client_id, client_secret = _google_client()
+    try:
+        exchange = requests.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": _google_redirect_uri(),
+                "grant_type": "authorization_code",
+            },
+            timeout=10,
+        )
+    except requests.RequestException:
+        return fail("google_unreachable")
+    if exchange.status_code != 200:
+        return fail("exchange_failed")
+
+    try:
+        claims = _decode_jwt_payload(exchange.json().get("id_token", ""))
+    except Exception:
+        return fail("bad_token")
+    if claims.get("aud") != client_id:
+        return fail("bad_audience")
+    if not claims.get("email") or not claims.get("email_verified"):
+        # An unverified email must never consolidate into an existing account.
+        return fail("unverified_email")
+
+    try:
+        token = accounts.login_google(str(claims.get("sub", "")), claims["email"])
+    except accounts.AccountError:
+        return fail("bad_google_identity")
+    return redirect(f"/app/#/account?token={token}")
+
+
+@app.route("/api/me/password", methods=["POST"])
+def me_set_password():
+    """Add or change a password from inside a signed-in session.
+
+    For a Google-first account this is what makes email+password work later —
+    the safe half of consolidation, because being here proves ownership.
+    """
+    user = _current_user()
+    if user is None:
+        return _auth_required()
+    body = request.get_json(silent=True) or {}
+    try:
+        accounts.set_password(user["id"], body.get("password", ""))
+    except accounts.AccountError as exc:
+        return jsonify({"code": exc.code, "error": str(exc)}), 400
+    return jsonify({"ok": True, "methods": accounts.login_methods(user["id"])})
+
+
+@app.route("/api/auth/register", methods=["POST"])
+def auth_register():
+    if _auth_throttled(_client_id()):
+        return jsonify(
+            {"code": "throttled", "error": "Too many attempts. Try again later."}
+        ), 429
+    body = request.get_json(silent=True) or {}
+    try:
+        user = accounts.register(body.get("email", ""), body.get("password", ""))
+        token = accounts.authenticate(body.get("email", ""), body.get("password", ""))
+    except accounts.AccountError as exc:
+        return jsonify({"code": exc.code, "error": str(exc)}), 400
+    return jsonify({"token": token, "user": user}), 201
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def auth_login():
+    if _auth_throttled(_client_id()):
+        return jsonify(
+            {"code": "throttled", "error": "Too many attempts. Try again later."}
+        ), 429
+    body = request.get_json(silent=True) or {}
+    try:
+        token = accounts.authenticate(body.get("email", ""), body.get("password", ""))
+    except accounts.AccountError as exc:
+        # 401, and the same body for unknown email and wrong password — see
+        # accounts.authenticate for why they are indistinguishable on purpose.
+        return jsonify({"code": exc.code, "error": str(exc)}), 401
+    user = accounts.user_for_token(token)
+    return jsonify({"token": token, "user": user})
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def auth_logout():
+    accounts.logout(_bearer_token())
+    # Idempotent: logging out an already-dead token is success, not an error.
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/me")
+def auth_me():
+    user = _current_user()
+    if user is None:
+        return _auth_required()
+    link = accounts.fpl_link(user["id"])
     return jsonify(
         {
-            "gameweek": state["gameweek"],
-            "deadline": state["deadline"],
-            "user_id": user_id,
-            "lineup": lineup,
-            "bench": bench,
-            "bank": history.get("bank"),
-            "squad_value": history.get("value"),
-            "active_chip": picks_payload.get("active_chip"),
-            "engine": projection_set.engine,
-            "meta": fpl_client.meta(
-                {"gameweek": state["gameweek"], "engine": projection_set.engine}
-            ),
+            "user": user,
+            "fpl": link,
+            "fpl_connected": accounts.has_cookie(user["id"]),
+            "methods": accounts.login_methods(user["id"]),
         }
     )
+
+
+@app.route("/api/me/fpl", methods=["POST"])
+def me_link_fpl():
+    """Link the account to an FPL entry by Team ID, verifying it exists."""
+    user = _current_user()
+    if user is None:
+        return _auth_required()
+
+    body = request.get_json(silent=True) or {}
+    try:
+        entry_id = int(body.get("entry_id"))
+    except (TypeError, ValueError):
+        return jsonify({"code": "bad_entry_id", "error": "entry_id must be a number"}), 400
+
+    entry = fpl_client.entry(entry_id)
+    if entry is None:
+        return jsonify(
+            {
+                "code": "entry_not_found",
+                "error": f"No FPL team found with ID {entry_id} this season.",
+            }
+        ), 404
+
+    link = accounts.link_fpl(
+        user["id"],
+        entry_id,
+        team_name=entry.get("name", ""),
+        manager_name=f"{entry.get('player_first_name', '')} "
+        f"{entry.get('player_last_name', '')}".strip(),
+    )
+    return jsonify({"fpl": link})
+
+
+@app.route("/api/me/fpl-cookie", methods=["POST", "DELETE"])
+def me_fpl_cookie():
+    """Store (or remove) the user's own FPL session cookie.
+
+    Validated against their linked entry before storing: a cookie that doesn't
+    authenticate today will not magically start working tomorrow, and rejecting
+    it now is the only moment the user is present to fix it. Write-only — no
+    GET exists, and no response ever contains the value.
+    """
+    user = _current_user()
+    if user is None:
+        return _auth_required()
+
+    if request.method == "DELETE":
+        accounts.delete_cookie(user["id"])
+        return jsonify({"ok": True, "fpl_connected": False})
+
+    link = accounts.fpl_link(user["id"])
+    if link is None:
+        return jsonify(
+            {"code": "no_fpl_link", "error": "Link your FPL Team ID first."}
+        ), 400
+
+    body = request.get_json(silent=True) or {}
+    cookie = (body.get("cookie") or "").strip()
+    if cookie.lower().startswith("cookie:"):
+        cookie = cookie.split(":", 1)[1].strip()
+    if not cookie:
+        return jsonify({"code": "empty_cookie", "error": "No cookie provided."}), 400
+
+    try:
+        payload = fpl_client.my_team(link["entry_id"], cookie=cookie)
+    except fpl_client.NotAuthenticated:
+        return jsonify(
+            {
+                "code": "cookie_rejected",
+                "error": "FPL did not accept that cookie. Copy the full Cookie "
+                "header from a logged-in fantasy.premierleague.com tab.",
+            }
+        ), 400
+    if payload is None:
+        return jsonify(
+            {
+                "code": "cookie_mismatch",
+                "error": "That cookie authenticates, but not for the linked team.",
+            }
+        ), 400
+
+    accounts.store_cookie(user["id"], cookie)
+    return jsonify({"ok": True, "fpl_connected": True})
+
+
+@app.route("/api/me/team")
+def me_team():
+    """The signed-in user's squad — their linked entry, their vaulted cookie."""
+    user = _current_user()
+    if user is None:
+        return _auth_required()
+    link = accounts.fpl_link(user["id"])
+    if link is None:
+        return jsonify(
+            {"code": "no_fpl_link", "error": "Link your FPL Team ID first."}
+        ), 400
+
+    horizon = _int_arg("horizon", 5, 1, service.MAX_HORIZON)
+    body, status = _team_response(
+        link["entry_id"], horizon, cookie=accounts.cookie_for(user["id"])
+    )
+    return jsonify(body), status
+
+
+@app.route("/api/me/transfers")
+def me_transfers():
+    """The signed-in user's transfer history, with player names resolved."""
+    user = _current_user()
+    if user is None:
+        return _auth_required()
+    link = accounts.fpl_link(user["id"])
+    if link is None:
+        return jsonify(
+            {"code": "no_fpl_link", "error": "Link your FPL Team ID first."}
+        ), 400
+
+    raw = fpl_client.transfers(link["entry_id"])
+    if raw is None:
+        return jsonify(
+            {"code": "entry_not_found", "error": "Could not read transfer history."}
+        ), 404
+
+    data = fpl_client.bootstrap()
+    elements = {int(p["id"]): p for p in data.get("elements", [])}
+
+    def _name(element_id):
+        element = elements.get(int(element_id or 0), {})
+        return element.get("web_name", "Unknown")
+
+    return jsonify(
+        {
+            "transfers": [
+                {
+                    "gameweek": t.get("event"),
+                    "in": _name(t.get("element_in")),
+                    "in_cost": (t.get("element_in_cost") or 0) / 10,
+                    "out": _name(t.get("element_out")),
+                    "out_cost": (t.get("element_out_cost") or 0) / 10,
+                    "time": t.get("time"),
+                }
+                for t in raw
+            ],
+            "meta": fpl_client.meta(),
+        }
+    )
+
+
+@app.route("/api/me/recommendations")
+def me_recommendations():
+    """AI transfer advice for the signed-in user's linked team."""
+    user = _current_user()
+    if user is None:
+        return _auth_required()
+    link = accounts.fpl_link(user["id"])
+    if link is None:
+        return jsonify(
+            {"code": "no_fpl_link", "error": "Link your FPL Team ID first."}
+        ), 400
+
+    result = service.recommendations(
+        entry_id=link["entry_id"],
+        horizon=_int_arg("horizon", service.DEFAULT_HORIZON, 1, service.MAX_HORIZON),
+        max_transfers=_int_arg("max_transfers", service.MAX_SEARCH_TRANSFERS, 0, 3),
+        free_transfers_override=_int_arg("free_transfers", None, 0, 5),
+        bank_override=_int_arg("bank", None, 0),
+        include_hits=_bool_arg("include_hits", True),
+        engine=_engine_arg(),
+    )
+    if narrative.would_call(result["plans"]):
+        try:
+            llm_budget.check_client(_client_id())
+        except llm_budget.ClientThrottled:
+            return jsonify(result)
+    narrative.annotate(result["plans"])
+    return jsonify(result)
 
 
 @app.route("/api/recommendations")
@@ -358,7 +920,15 @@ def recommendations():
         engine=_engine_arg(),
     )
 
-    # Strictly additive: a failure here leaves the response unchanged.
+    # Strictly additive. A throttled caller still gets their fully computed,
+    # non-LLM recommendations — narration is the garnish, never the dish — so
+    # being over the limit drops the prose rather than failing the request.
+    # Metered only when a call would actually be spent.
+    if narrative.would_call(result["plans"]):
+        try:
+            llm_budget.check_client(_client_id())
+        except llm_budget.ClientThrottled:
+            return jsonify(result)
     narrative.annotate(result["plans"])
     return jsonify(result)
 
@@ -384,8 +954,50 @@ def fcps_recommendations():
     if user_id is None:
         return jsonify({"code": "missing_user_id", "error": "user_id is required"}), 400
 
+    refresh = _bool_arg("refresh", False)
+
+    # Only charged when a call could actually happen. A cache hit is free, and
+    # `refresh` is the one way a client can force a spend, so it must be metered.
+    if refresh or not service.fcps_is_cached(user_id):
+        try:
+            llm_budget.check_client(_client_id())
+        except llm_budget.ClientThrottled as error:
+            return jsonify({"code": "fcps_throttled", "error": str(error)}), 429
+
+    return jsonify(service.fcps_advice(entry_id=user_id, refresh=refresh))
+
+
+@app.route("/api/draft-squad")
+def draft_squad():
+    """A recommended opening fifteen, for the window before the GW1 deadline.
+
+    Every other advice route needs a squad to read, and FPL publishes none until
+    the deadline passes — so for the three weeks when the only task is picking a
+    team, the app had nothing to say. This is that gap.
+
+    The result does not depend on `user_id`: there are no picks to personalise
+    against. One squad, computed once, served to everyone.
+    """
+    pinned = [p.strip() for p in (request.args.get("pin") or "").split(",") if p.strip()]
+
+    # Only metered when prose would actually be generated. The squad itself is
+    # arithmetic and free; a cached summary costs nothing either.
+    if not service.draft_summary_is_cached(
+        horizon=_int_arg("horizon", service.DEFAULT_HORIZON, 1, service.MAX_HORIZON),
+        engine=_engine_arg(),
+        pinned=pinned,
+    ):
+        try:
+            llm_budget.check_client(_client_id())
+        except llm_budget.ClientThrottled as error:
+            return jsonify({"code": "draft_throttled", "error": str(error)}), 429
+
     return jsonify(
-        service.fcps_advice(entry_id=user_id, refresh=_bool_arg("refresh", False))
+        service.draft_squad(
+            horizon=_int_arg("horizon", service.DEFAULT_HORIZON, 1, service.MAX_HORIZON),
+            engine=_engine_arg(),
+            pinned=pinned,
+        )
     )
 
 
@@ -399,26 +1011,99 @@ def engines():
     """
     return jsonify(
         {
-            "scoring": ml_scorer.describe(),
+            "scoring": ml_scorer.describe(team_games=_team_games_played()),
             "fcps": {
                 "available": fcps_llm.is_configured(),
                 "model": fcps_llm.model_name(),
+                "effort": fcps_llm.effort_level(),
+                "cache_ttl_seconds": fcps_llm.CACHE_TTL_SECONDS,
                 "reason": None
                 if fcps_llm.is_configured()
-                else "No OpenAI API key is configured on this server.",
+                else "The Claude CLI is not installed or not on this server's PATH.",
             },
-            "narrative": {"available": narrative.is_enabled()},
+            "narrative": {
+                "available": narrative.is_enabled(),
+                "model": narrative.model_name(),
+            },
+            "research": research.status(),
+            # Surfaced so the client can explain a 429 rather than showing a
+            # retry button for a condition retrying won't fix. Counts only —
+            # nothing here identifies a caller.
+            "budget": {
+                "daily_ceiling": llm_budget.DAILY_CALL_CEILING,
+                "remaining_today": llm_budget.remaining_today(),
+                "client_hourly_limit": llm_budget.CLIENT_CALLS_PER_HOUR,
+            },
             "meta": fpl_client.meta(),
         }
     )
 
 
+def _global_captain_ranking(limit: int):
+    """Best armband candidates in the league, for anyone — no squad required.
+
+    The squad-scoped ranking below can only answer "who, of my fifteen?", which
+    needs a signed-in user and a season already under way. This answers "who,
+    of everyone?", which is the question a visitor with no account is asking,
+    and it is the one that can be published on a public page.
+    """
+    projection_set = service.projections_for(1, _engine_arg())
+    projections, data = projection_set.projections, projection_set.data
+    teams = {int(t["id"]): t.get("short_name", "UNK") for t in data.get("teams", [])}
+    elements = {int(e["id"]): e for e in data.get("elements", [])}
+
+    ranked = []
+    for pid, projection in projections.items():
+        element = elements.get(pid)
+        if element is None:
+            continue
+        xpts_next = float(projection.get("xpts_next") or 0.0)
+        if xpts_next <= 0:
+            continue
+        # A blank gameweek cannot be captained; an unavailable player should not
+        # be suggested for the one pick that doubles.
+        fixtures = (projection.get("per_gameweek") or [{}])[0].get("fixtures") or []
+        if not fixtures:
+            continue
+        ranked.append(
+            {
+                "id": pid,
+                "web_name": element.get("web_name", ""),
+                "team": teams.get(int(element.get("team", 0)), "UNK"),
+                "position": rules.position_of(element),
+                "price": int(element.get("now_cost", 0)) / 10,
+                "fixtures": fixtures,
+                "xpts": round(xpts_next, 2),
+                "xpts_captained": round(xpts_next * 2, 2),
+                "minutes_risk": projection.get("minutes_risk", "medium"),
+                "selected_by_percent": _safe_float(element.get("selected_by_percent")),
+            }
+        )
+
+    ranked.sort(key=lambda r: (-r["xpts"], r["id"]))
+    return ranked[:limit]
+
+
 @app.route("/api/captain")
 def captain_picks():
-    """Rank the manager's squad for the armband."""
+    """Rank candidates for the armband.
+
+    With ``user_id``, ranks that manager's own squad. Without it, ranks the
+    whole league — which works before a ball is kicked and needs no account.
+    """
     user_id = request.args.get("user_id", type=int)
+
     if user_id is None:
-        return jsonify({"code": "missing_user_id", "error": "user_id is required"}), 400
+        state = fpl_client.season_state() or {}
+        return jsonify(
+            {
+                "scope": "global",
+                "gameweek": state.get("gameweek"),
+                "deadline": state.get("deadline"),
+                "picks": _global_captain_ranking(_int_arg("limit", 20, 1, 100)),
+                "meta": fpl_client.meta(),
+            }
+        )
 
     state = fpl_client.season_state()
     if not state or not state["started"]:
