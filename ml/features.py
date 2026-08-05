@@ -131,6 +131,11 @@ _CUMULATIVE = (
 
 FORM_WINDOW = 4  # FPL's own `form` is a 30-day mean, which is ~4 gameweeks.
 
+# The denominator to use for season totals when the league table has reset. A
+# Premier League season is 38 matches; between seasons the element totals still
+# describe all 38 of them.
+COMPLETED_SEASON_GAMES = 38
+
 
 def _safe_div(numerator, denominator):
     """Element-wise divide where a zero denominator yields 0, not inf or NaN."""
@@ -285,8 +290,21 @@ def from_bootstrap(
     nan = float("nan")
 
     minutes = _f(element.get("minutes"))
-    games = max(1.0, float(team_games))
     total_points = _f(element.get("total_points"))
+
+    # Between seasons the league table resets, so `team_games` arrives as 0 while
+    # the element totals still describe the *completed* campaign — 38 games of
+    # minutes, points and ICT. Dividing those by `max(1, 0)` produced per-game
+    # features inflated ~38x: `start_rate`, a ratio bounded 0-1 in training, was
+    # reaching 34, and `ict_per_game` 302 against a training range in single
+    # digits. Every such value sits far outside the splits the trees learned, so
+    # they saturate at the top bin and rank on noise.
+    #
+    # A completed season is the honest denominator for a completed season's
+    # totals. `build_frame` derives the training equivalent by counting prior
+    # rows, which is never 0 — `MIN_GAMEWEEK` keeps it at 4 or more — so 0 is a
+    # value the model has simply never seen.
+    games = float(team_games) if team_games and team_games > 0 else float(COMPLETED_SEASON_GAMES)
 
     # FPL publishes points_per_game as a string; recompute when it is absent so a
     # schema change degrades one feature rather than zeroing it.

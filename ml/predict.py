@@ -117,6 +117,30 @@ class Predictor:
             blank = matrix[:, self.feature_names.index("n_fixtures")] <= 0
             predictions[blank] = 0.0
 
+            # A player with no minutes has every performance feature at zero, so
+            # the only informative input left is `fpl_xp` — FPL's own `ep_next`.
+            # The model leans on it hard: zeroing that one feature drops such a
+            # prediction from ~9 to ~0. Between seasons, when `ep_next` is a
+            # placeholder rather than a projection, that produces confident
+            # scores for players who have never kicked a ball — a £46m signing
+            # and an unused academy squad number score alike, and both outrank a
+            # 209-point defender.
+            #
+            # The model cannot distinguish "rate of zero" from "no observation":
+            # `_safe_div` yields 0.0 for both in training and here, so there is
+            # no missingness for the tree to learn from. Rather than invent a
+            # signal, the projection is capped at FPL's own number. That is a
+            # weak estimate, but it is an *honest* one, and it stops the
+            # optimiser preferring unknowns to proven players.
+            if "minutes_per_team_game" in self.feature_names:
+                unseen = matrix[:, self.feature_names.index("minutes_per_team_game")] <= 0
+                if "fpl_xp" in self.feature_names:
+                    fallback = matrix[:, self.feature_names.index("fpl_xp")]
+                    fallback = np.nan_to_num(fallback, nan=0.0)
+                    predictions[unseen] = np.minimum(predictions[unseen], fallback[unseen])
+                else:
+                    predictions[unseen] = 0.0
+
             for pid, value in zip(ids, predictions):
                 by_player[pid][gameweek] = float(value)
 

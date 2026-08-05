@@ -15,3 +15,5 @@ ml/artifacts/
 # Flutter build output is committed so Heroku can serve it.
 # Regenerate locally with: bash scripts/deploy_flutter.sh
 # flutter_web/
+# Runtime log from scripts/refresh-research.sh
+scripts/research.log

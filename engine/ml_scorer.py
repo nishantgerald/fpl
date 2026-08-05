@@ -38,14 +38,48 @@ DEFAULT_ENGINE = "xpts"
 BLEND_WEIGHT = 0.5
 
 
+def min_team_games() -> int:
+    """Games a team must have played before the model's inputs are meaningful.
+
+    Not a taste threshold — it is read off the training distribution. The panel
+    keeps rows from ``ml.config.MIN_GAMEWEEK`` (5) onwards, and
+    ``team_games_played`` counts *prior* rows, so the smallest value the model
+    ever fitted against is 4. Scoring a team on 0, 1, 2 or 3 games asks it to
+    extrapolate outside every split it learned.
+
+    That extrapolation is not hypothetical. Between seasons, with every
+    performance feature at zero, the model priced players off FPL's own
+    ``ep_next`` alone and returned ~11 points for footballers who had never
+    played a Premier League minute — above a defender who had just scored 209.
+    The features carry no signal yet; the honest move is to say so and let the
+    hand-built :mod:`engine.xpts` model, which reasons from last season's
+    totals and fixture difficulty rather than from a fitted distribution, take
+    the opening gameweeks.
+
+    Derived rather than hardcoded so that changing ``MIN_GAMEWEEK`` and
+    retraining moves the gate with it.
+    """
+    try:
+        from ml import config
+
+        return max(1, int(config.MIN_GAMEWEEK) - 1)
+    except Exception:
+        return 4
+
+
 def is_available() -> bool:
     """Whether a trained artifact is loadable in this process."""
     predictor = _predictor()
     return predictor is not None
 
 
-def describe() -> dict:
-    """What the client shows in the engine picker, without guessing."""
+def describe(team_games: int | None = None) -> dict:
+    """What the client shows in the engine picker, without guessing.
+
+    ``team_games`` lets the caller report the *live* state: an artifact can be
+    present and still be too early in the season to use, and those are different
+    answers. Omitted, only artifact availability is described.
+    """
     predictor = _predictor()
     if predictor is None:
         return {
@@ -56,8 +90,10 @@ def describe() -> dict:
                 "and redeploy to enable the ML engine."
             ),
         }
+
+    threshold = min_team_games()
     metadata = predictor.metadata
-    return {
+    described = {
         "available": True,
         "engines": list(ENGINES),
         "model": predictor.name,
@@ -65,7 +101,27 @@ def describe() -> dict:
         "features": len(predictor.feature_names),
         "test_scores": metadata.get("test_scores", {}),
         "selection_metric": metadata.get("selection_metric"),
+        "min_team_games": threshold,
     }
+
+    if team_games is not None and team_games < threshold:
+        described.update(
+            {
+                "active": False,
+                "engines": ["xpts"],
+                "team_games_played": team_games,
+                "reason": (
+                    f"Only {team_games} league game(s) played. The model was "
+                    f"trained from gameweek {threshold + 1} onwards and has no "
+                    "fitted behaviour for a season this young, so requests are "
+                    "served by the xpts engine until then."
+                ),
+            }
+        )
+    elif team_games is not None:
+        described.update({"active": True, "team_games_played": team_games})
+
+    return described
 
 
 def _predictor():
@@ -112,6 +168,11 @@ def project_all(
     ]
     fixture_index = xpts.build_fixture_index(fixtures, from_gameweek)
     team_games = xpts.team_games_played(teams, events)
+
+    # Too early in the season for the model's inputs to mean anything. Fall back
+    # rather than dress a guess as a projection — see `min_team_games`.
+    if team_games < min_team_games():
+        return baseline, "xpts"
 
     try:
         raw = predictor.score(elements, fixture_index, gameweeks, team_games)

@@ -1,0 +1,265 @@
+"""Hard limits on language-model calls, because the endpoint faces the internet.
+
+The model is reached through the Claude CLI, which authenticates with the
+operator's personal Claude subscription. That inverts the usual threat model.
+There is no bill to cap and no per-request charge to notice — the scarce resource
+is the subscription's own rate-limit window, and it is *shared with the
+operator's other work*. An abuser who exhausts it doesn't run up a charge; they
+take out the operator's Claude Code sessions as collateral. That is the damage
+this module exists to bound.
+
+Three things had to be true before narration could be turned on, and none of them
+were:
+
+*Caching is not rate limiting.* :mod:`engine.fcps_llm` caches per
+``(entry, gameweek, model)`` for a day. That stops the same manager re-triggering
+a call; it does nothing about someone walking ``user_id=1,2,3,...`` through the
+several million entry IDs FPL hands out, each of which is a fresh key and a
+fresh call.
+
+*Narration multiplies.* ``narrative.annotate`` was written to narrate every plan
+the optimiser returned, up to five, on a route with no LLM cache at all. Turned
+on as it stood, one request to ``/api/recommendations`` was five calls, and the
+same request repeated was five more.
+
+*Concurrency is unbounded.* Each call forks a Node process that idles around a
+couple of hundred megabytes. Nothing stopped a hundred of them existing at once,
+which exhausts memory and PIDs long before it exhausts any quota.
+
+So: a global daily ceiling that no caller can raise, a cap on simultaneous
+processes, and a fail-closed default. All three are enforced here rather than at
+the route, so a new route can't forget them.
+
+Both limits are held on disk, not in memory. The app is served by gunicorn with
+more than one worker; a per-process counter would multiply the ceiling by the
+worker count, which is precisely the mistake that makes a limit look enforced
+while not being one.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import fcntl
+import json
+import os
+import time
+from pathlib import Path
+
+# The ceiling is deliberately low. Legitimate traffic is one call per manager per
+# day for FCPS plus a handful of narrations; a few hundred covers real use with
+# room to spare, and anything past it is far likelier to be abuse than a good
+# day. Raise it knowingly, not reflexively.
+DAILY_CALL_CEILING = int(os.getenv("LLM_DAILY_CEILING", "250"))
+
+# Simultaneous CLI processes. Each is a Node runtime; this is a memory bound as
+# much as a fairness one.
+MAX_CONCURRENT_CALLS = int(os.getenv("LLM_MAX_CONCURRENT", "2"))
+
+STATE_DIR = Path(
+    os.getenv("LLM_BUDGET_DIR", Path.home() / ".cache" / "fpl" / "llm-budget")
+)
+
+
+class BudgetExhausted(Exception):
+    """The global daily ceiling is spent. Retrying today will not help."""
+
+
+class TooBusy(Exception):
+    """Every concurrency slot is occupied. Retrying shortly may help."""
+
+
+def _today() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
+@contextlib.contextmanager
+def reserve(kind: str):
+    """Hold a concurrency slot and one unit of the daily ceiling.
+
+    The ceiling is consumed on entry rather than on success. A call that fails
+    after the model ran still cost the subscription its tokens, and a failure
+    loop is exactly the shape of traffic a ceiling exists to stop — refunding it
+    would turn every error into free retries.
+
+    Raises :class:`BudgetExhausted` or :class:`TooBusy`; both are the caller's to
+    translate into whatever the route should return.
+    """
+    _spend_one(kind)
+    with _slot():
+        yield
+
+
+# ------------------------------------------------------------------ daily count
+
+
+def _spend_one(kind: str) -> None:
+    """Increment today's counter under an exclusive lock, or refuse."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    path = STATE_DIR / "calls.json"
+
+    # Opened "a+" so the file is created if absent without truncating it if not.
+    with open(path, "a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            handle.seek(0)
+            raw = handle.read()
+            try:
+                state = json.loads(raw) if raw.strip() else {}
+            except ValueError:
+                state = {}
+
+            today = _today()
+            # Yesterday's counts are dropped rather than accumulated, so the
+            # file cannot grow without bound.
+            if state.get("date") != today:
+                state = {"date": today, "total": 0, "by_kind": {}}
+
+            if state["total"] >= DAILY_CALL_CEILING:
+                raise BudgetExhausted(
+                    f"The daily model-call ceiling ({DAILY_CALL_CEILING}) is spent."
+                )
+
+            state["total"] += 1
+            state["by_kind"][kind] = state["by_kind"].get(kind, 0) + 1
+
+            handle.seek(0)
+            handle.truncate()
+            json.dump(state, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def spent_today() -> dict:
+    """Today's usage, for the status endpoint. Never raises."""
+    try:
+        raw = (STATE_DIR / "calls.json").read_text("utf-8")
+        state = json.loads(raw)
+        if state.get("date") != _today():
+            return {"date": _today(), "total": 0, "by_kind": {}}
+        return state
+    except (OSError, ValueError):
+        return {"date": _today(), "total": 0, "by_kind": {}}
+
+
+def remaining_today() -> int:
+    return max(0, DAILY_CALL_CEILING - int(spent_today().get("total", 0)))
+
+
+# ------------------------------------------------------------------ per client
+
+
+# The global ceiling alone is a blunt instrument: it bounds the damage but one
+# abuser can still spend the whole day's allowance in a loop and lock out every
+# legitimate manager. A per-client limit is what keeps the ceiling *fairly*
+# distributed rather than merely finite.
+CLIENT_CALLS_PER_HOUR = int(os.getenv("LLM_CLIENT_HOURLY", "10"))
+_CLIENT_WINDOW_SECONDS = 3600
+
+# Bounded so a spray of forged addresses can't grow the file without limit. When
+# full the oldest entries are dropped, which fails *open* for new clients rather
+# than locking everyone out — the global ceiling is still behind it.
+_CLIENT_TABLE_MAX = 4096
+
+
+class ClientThrottled(Exception):
+    """This caller has had its share of the hour."""
+
+
+def check_client(client_id: str) -> None:
+    """Record a call against ``client_id`` and refuse if it's over its share.
+
+    ``client_id`` is normally an IP address, which is spoofable and shared by
+    everyone behind a NAT. This is therefore a speed bump for casual abuse, not
+    an identity control — the global ceiling is the guarantee. It is enforced
+    here, on disk, rather than per-process, because gunicorn runs several
+    workers and a per-process table would multiply the limit by the worker
+    count.
+    """
+    if not client_id:
+        return
+
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    path = STATE_DIR / "clients.json"
+    now = time.time()
+    cutoff = now - _CLIENT_WINDOW_SECONDS
+
+    with open(path, "a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            handle.seek(0)
+            raw = handle.read()
+            try:
+                table = json.loads(raw) if raw.strip() else {}
+            except ValueError:
+                table = {}
+
+            # Prune globally, not just for this client, or the file only ever
+            # grows and every read gets slower.
+            table = {
+                key: [t for t in stamps if t > cutoff]
+                for key, stamps in table.items()
+                if isinstance(stamps, list)
+            }
+            table = {key: stamps for key, stamps in table.items() if stamps}
+
+            stamps = table.get(client_id, [])
+            if len(stamps) >= CLIENT_CALLS_PER_HOUR:
+                raise ClientThrottled(
+                    f"This client has made {len(stamps)} model calls in the last "
+                    f"hour; the limit is {CLIENT_CALLS_PER_HOUR}."
+                )
+
+            stamps.append(now)
+            table[client_id] = stamps
+
+            if len(table) > _CLIENT_TABLE_MAX:
+                # Keep the most recently active. Dropping the rest lets those
+                # clients start a fresh window, which is the safe direction.
+                ordered = sorted(table.items(), key=lambda kv: max(kv[1]), reverse=True)
+                table = dict(ordered[:_CLIENT_TABLE_MAX])
+
+            handle.seek(0)
+            handle.truncate()
+            json.dump(table, handle)
+            handle.flush()
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+# ------------------------------------------------------------------ concurrency
+
+
+@contextlib.contextmanager
+def _slot():
+    """Occupy one of ``MAX_CONCURRENT_CALLS`` slots for the duration.
+
+    Implemented as N lock files tried non-blockingly rather than as a counter,
+    because a counter has to be decremented and a process killed mid-call never
+    gets to decrement it. A flock is released by the kernel when the file
+    descriptor closes, whatever the reason it closed, so a crash cannot leak a
+    slot permanently.
+    """
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    handles = []
+    try:
+        for index in range(MAX_CONCURRENT_CALLS):
+            handle = open(STATE_DIR / f"slot-{index}.lock", "w", encoding="utf-8")
+            handles.append(handle)
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                continue  # taken; try the next
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            return
+        raise TooBusy(
+            f"All {MAX_CONCURRENT_CALLS} model-call slots are busy. Try again shortly."
+        )
+    finally:
+        for handle in handles:
+            with contextlib.suppress(OSError):
+                handle.close()

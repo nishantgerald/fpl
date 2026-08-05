@@ -269,3 +269,92 @@ def test_baseline_inputs_are_never_features():
     assert not set(features.BASELINE_INPUTS) & set(features.FEATURES)
     assert not set(features.LABEL_EXTRAS) & set(features.FEATURES)
     assert features.TARGET not in features.FEATURES
+
+
+# ── Between-seasons inference ───────────────────────────────────────────────
+#
+# Both regressions below only appear when `team_games` is 0 and element totals
+# describe a completed season — that is, exactly when a manager is picking their
+# opening squad, and never during the mid-season window the backtest measures.
+
+
+def _element(**overrides):
+    element = {
+        "id": 1,
+        "element_type": 2,
+        "team": 1,
+        "now_cost": 50,
+        "minutes": 2953,
+        "starts": 34,
+        "total_points": 239,
+        "points_per_game": "6.8",
+        "ict_index": "302.3",
+        "influence": "1180.4",
+        "creativity": "320.1",
+        "threat": "1520.0",
+        "goals_scored": 27,
+        "assists": 8,
+        "clean_sheets": 13,
+        "goals_conceded": 32,
+        "saves": 0,
+        "bps": 952,
+        "bonus": 43,
+        "expected_goals": "25.50",
+        "expected_assists": "2.67",
+        "expected_goals_conceded": "38.6",
+        "form": "0.0",
+        "ep_next": "4.0",
+    }
+    element.update(overrides)
+    return element
+
+
+CONTEXT = {"n_fixtures": 1, "mean_fdr": 3.0, "home_share": 0.5}
+
+
+def test_a_reset_league_table_does_not_divide_season_totals_by_one():
+    """`start_rate` is a ratio bounded 0-1; it was reaching 34.
+
+    Between seasons the API reports 0 games played while the element still
+    carries 38 games of totals. Dividing by `max(1, 0)` inflated every per-game
+    feature ~38x, far outside the splits the trees were fitted on.
+    """
+    row = features.from_bootstrap(_element(), 0, CONTEXT)
+
+    assert 0.0 <= row["start_rate"] <= 1.0
+    assert row["ict_per_game"] < 20
+    assert row["minutes_per_team_game"] <= 90.0
+
+
+def test_a_live_league_table_is_still_used_when_present():
+    """The fallback must not override a real mid-season count."""
+    row = features.from_bootstrap(_element(minutes=900, starts=10), 10, CONTEXT)
+
+    assert row["start_rate"] == pytest.approx(1.0)
+    assert row["minutes_per_team_game"] == pytest.approx(90.0)
+
+
+def test_a_player_who_has_never_played_is_not_scored_above_a_proven_one():
+    """The regression that put £46m signings above a 209-point defender.
+
+    With no minutes every performance feature is 0.0, indistinguishable from a
+    genuine rate of zero, so the model priced these players off `fpl_xp` alone
+    and returned ~9-12 points with no evidence behind it.
+    """
+    predict = pytest.importorskip("ml.predict")
+    predictor = predict.get_predictor()
+    if predictor is None:
+        pytest.skip("no trained artifact on this machine")
+
+    unseen = _element(
+        minutes=0, starts=0, total_points=0, points_per_game="0.0",
+        ict_index="0.0", influence="0.0", creativity="0.0", threat="0.0",
+        goals_scored=0, assists=0, clean_sheets=0, goals_conceded=0, bps=0,
+        bonus=0, expected_goals="0.0", expected_assists="0.0",
+        expected_goals_conceded="0.0", ep_next="2.2",
+    )
+    scored = predictor.score([unseen], {1: {1: [{"difficulty": 3, "home": True}]}}, [1], 0)
+    projection = scored.get(1, {}).get(1, 0.0)
+
+    # Capped at FPL's own estimate: weak, but honest, and never invented.
+    assert projection <= float(unseen["ep_next"]) + 1e-6

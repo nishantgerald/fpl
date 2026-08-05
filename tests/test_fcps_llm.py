@@ -1,24 +1,40 @@
-"""The FCPS advice layer, tested without a network or an API key.
+"""The FCPS advice layer, tested without a network or a model.
 
 The bugs being pinned down here are the ones that made the feature unreachable
 rather than merely wrong:
 
-* a missing key must raise, not return a 200 with an exception string in the
+* a missing model must raise, not return a 200 with an exception string in the
   field the client renders as advice;
 * the prompt must carry the manager's bank, which the original never passed
   while asking the model to check affordability;
 * nothing in this module may import Flask or touch a template.
+
+The model is reached by spawning the Claude CLI, so "no model available" is
+spelled as a binary that isn't there. No test in this file may invoke the real
+CLI: that would spend a real call against a real subscription, and would make
+the suite depend on the machine being logged in.
 """
+
+import pathlib
+import time
 
 import pytest
 
-from engine import fcps, fcps_llm
+from engine import fcps, fcps_llm, llm_budget
 from tests.conftest import make_element
 
 
 @pytest.fixture(autouse=True)
-def _no_key(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def _no_cli(monkeypatch, tmp_path):
+    """No reachable CLI, and no state that can outlive the test.
+
+    ``llm_budget.STATE_DIR`` is redirected too: ``call_model`` reserves against
+    the global daily ceiling, so without this the suite spends the operator's
+    real budget every run and the counter drifts up with no calls behind it.
+    """
+    monkeypatch.setenv("FCPS_CLAUDE_BIN", str(tmp_path / "definitely-not-here"))
+    monkeypatch.setattr(fcps_llm, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(llm_budget, "STATE_DIR", tmp_path / "budget")
     fcps_llm.clear_cache()
 
 
@@ -31,7 +47,7 @@ def rows(elements, fixtures):
     ]
 
 
-def test_missing_key_raises_rather_than_returning_an_error_as_advice(rows):
+def test_missing_cli_raises_rather_than_returning_an_error_as_advice(rows):
     with pytest.raises(fcps_llm.FcpsUnavailable) as caught:
         fcps_llm.advise(rows[:15], rows[15:], gameweek=14)
 
@@ -40,10 +56,116 @@ def test_missing_key_raises_rather_than_returning_an_error_as_advice(rows):
     assert caught.value.to_dict()["code"] == "fcps_not_configured"
 
 
-def test_is_configured_reflects_the_environment(monkeypatch):
+def test_is_configured_reflects_whether_the_cli_is_reachable(monkeypatch, tmp_path):
     assert fcps_llm.is_configured() is False
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    binary = tmp_path / "claude"
+    binary.write_text("#!/bin/sh\n")
+    monkeypatch.setenv("FCPS_CLAUDE_BIN", str(binary))
     assert fcps_llm.is_configured() is True
+
+
+def test_a_nonzero_exit_is_an_upstream_error_not_advice(monkeypatch):
+    """A failed CLI call must not reach the client as prose."""
+    monkeypatch.setattr(fcps_llm, "cli_path", lambda: "/bin/false")
+
+    with pytest.raises(fcps_llm.FcpsUnavailable) as caught:
+        fcps_llm.call_model("anything")
+
+    assert caught.value.code == "fcps_upstream_error"
+    assert caught.value.status == 502
+
+
+def test_non_json_output_is_an_upstream_error(monkeypatch):
+    monkeypatch.setattr(fcps_llm, "cli_path", lambda: "/bin/echo")
+
+    with pytest.raises(fcps_llm.FcpsUnavailable) as caught:
+        fcps_llm.call_model("anything")
+
+    assert caught.value.code == "fcps_upstream_error"
+
+
+def _fake_cli(tmp_path, payload: dict):
+    """A stand-in for the CLI that echoes one fixed JSON payload.
+
+    Written in Python rather than shell because ``sh``'s ``echo`` expands
+    backslash escapes, which silently corrupts any JSON containing a newline.
+    """
+    import json
+
+    binary = tmp_path / "fake-claude"
+    binary.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "sys.stdin.read()\n"
+        f"sys.stdout.write({json.dumps(json.dumps(payload))})\n"
+    )
+    binary.chmod(0o755)
+    return str(binary)
+
+
+def test_the_cli_error_flag_is_honoured_even_on_a_zero_exit(monkeypatch, tmp_path):
+    """The CLI can exit 0 and still report failure in the payload."""
+    binary = _fake_cli(
+        tmp_path, {"is_error": True, "subtype": "rate_limit", "result": ""}
+    )
+    monkeypatch.setattr(fcps_llm, "cli_path", lambda: binary)
+
+    with pytest.raises(fcps_llm.FcpsUnavailable) as caught:
+        fcps_llm.call_model("anything")
+
+    assert caught.value.code == "fcps_upstream_error"
+    assert "rate_limit" in caught.value.message
+
+
+def test_the_result_field_is_what_comes_back(monkeypatch, tmp_path):
+    binary = _fake_cli(tmp_path, {"is_error": False, "result": "# Column\n"})
+    monkeypatch.setattr(fcps_llm, "cli_path", lambda: binary)
+
+    assert fcps_llm.call_model("anything") == "# Column"
+
+
+def test_an_empty_result_is_an_error_not_an_empty_column(monkeypatch, tmp_path):
+    binary = _fake_cli(tmp_path, {"is_error": False, "result": "   "})
+    monkeypatch.setattr(fcps_llm, "cli_path", lambda: binary)
+
+    with pytest.raises(fcps_llm.FcpsUnavailable) as caught:
+        fcps_llm.call_model("anything")
+
+    assert caught.value.code == "fcps_upstream_error"
+
+
+def test_the_day_long_gate_survives_a_process_restart(monkeypatch, tmp_path, rows):
+    """The cache is the rate limit gate, so it has to outlive the worker."""
+    key = (12345, 14, "sonnet")
+    fcps_llm._cache_put(key, {"markdown": "# Column", "cached": False})
+
+    # Everything in memory is gone; only the disk tier remains.
+    fcps_llm._CACHE.clear()
+
+    recovered = fcps_llm._cache_get(key)
+    assert recovered is not None
+    assert recovered["markdown"] == "# Column"
+
+
+def test_an_expired_entry_is_a_miss_on_disk_too(monkeypatch, rows):
+    key = (12345, 14, "sonnet")
+    fcps_llm._cache_put(key, {"markdown": "# Column"})
+    fcps_llm._CACHE.clear()
+
+    # Captured before patching: re-importing inside the lambda would resolve to
+    # the patched module and recurse.
+    a_day_later = time.time() + 86_401
+    monkeypatch.setattr(fcps_llm.time, "time", lambda: a_day_later)
+    assert fcps_llm._cache_get(key) is None
+
+
+def test_an_unwritable_cache_dir_does_not_break_the_response(monkeypatch, rows):
+    """A degraded cache weakens the gate; it must not fail the request."""
+    monkeypatch.setattr(fcps_llm, "CACHE_DIR", pathlib.Path("/proc/x/y"))
+
+    fcps_llm._cache_put((1, 2, "sonnet"), {"markdown": "ok"})  # must not raise
+    assert fcps_llm._CACHE[(1, 2, "sonnet")][1]["markdown"] == "ok"
 
 
 def test_prompt_carries_the_bank_and_the_free_transfer_count(rows):

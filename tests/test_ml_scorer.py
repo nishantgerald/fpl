@@ -140,3 +140,83 @@ def test_blend_is_the_mean_of_the_two_engines(elements):
     merged = ml_scorer._merge(base, {13: 8.0}, elements[0], engine="blend")
 
     assert merged["per_gameweek"][0]["xpts"] == pytest.approx(6.0)
+
+
+# ── Early-season gate ───────────────────────────────────────────────────────
+
+
+def test_the_gate_is_derived_from_the_training_window_not_hardcoded():
+    """Retraining with a different MIN_GAMEWEEK must move the gate with it."""
+    from ml import config
+
+    assert ml_scorer.min_team_games() == config.MIN_GAMEWEEK - 1
+
+
+def test_the_model_is_not_used_before_it_has_seen_a_comparable_season(
+    monkeypatch, elements, fixtures, teams, events
+):
+    """Between seasons the features are all zero and the model invents numbers.
+
+    Asking for `ml` this early must return xpts and *say* xpts, not relabel
+    hand-built numbers as model output.
+    """
+    monkeypatch.setattr(ml_scorer.xpts, "team_games_played", lambda *a, **k: 0)
+
+    projections, engine_used = ml_scorer.project_all(
+        elements, fixtures, teams, events, from_gameweek=1, horizon=3, engine="ml"
+    )
+
+    assert engine_used == "xpts"
+    baseline = ml_scorer.xpts.project_all(
+        elements, fixtures, teams, events, 1, 3
+    )
+    assert projections == baseline
+
+
+def test_blend_is_gated_too(monkeypatch, elements, fixtures, teams, events):
+    """`blend` averages in the model, so it inherits the same problem."""
+    monkeypatch.setattr(ml_scorer.xpts, "team_games_played", lambda *a, **k: 2)
+
+    _, engine_used = ml_scorer.project_all(
+        elements, fixtures, teams, events, from_gameweek=3, horizon=3, engine="blend"
+    )
+
+    assert engine_used == "xpts"
+
+
+class _StubPredictor:
+    """Stands in for a loaded artifact, so this doesn't need a trained model.
+
+    The file's autouse fixture deliberately hides any real artifact; what's
+    under test here is the *early-season* branch, which only exists when a
+    model is present, so one has to be faked.
+    """
+
+    name = "stub"
+    trained_on = ["2019-20"]
+    feature_names = ["form"]
+    metadata: dict = {}
+
+
+def test_the_status_response_explains_why_the_model_is_inactive(monkeypatch):
+    """A silent fallback looks like a broken engine picker."""
+    monkeypatch.setattr(ml_scorer, "_predictor", lambda: _StubPredictor())
+
+    described = ml_scorer.describe(team_games=0)
+
+    assert described["available"] is True
+    assert described["active"] is False
+    assert described["engines"] == ["xpts"]
+    assert "0 league game" in described["reason"]
+
+
+def test_the_status_response_reports_the_model_live_once_the_season_is_old_enough(
+    monkeypatch,
+):
+    monkeypatch.setattr(ml_scorer, "_predictor", lambda: _StubPredictor())
+
+    described = ml_scorer.describe(team_games=ml_scorer.min_team_games())
+
+    assert described["active"] is True
+    assert described["engines"] == list(ml_scorer.ENGINES)
+    assert "reason" not in described

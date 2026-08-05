@@ -156,16 +156,37 @@ Full methodology, splits, baselines and results:
 ### Optional: FCPS advice
 
 FCPS scores are always computed and always returned. The *written column* needs a
-key:
+model, reached through the **Claude CLI** rather than an HTTP API — the server
+holds no API key and spends nothing per call, because the CLI authenticates with
+the operator's own Claude subscription.
 
 ```bash
-export OPENAI_API_KEY=sk-...
-export FCPS_MODEL=gpt-4o-mini     # optional
+# The CLI must be installed and logged in as the user the web process runs as.
+claude --version
+
+export FCPS_CLAUDE_BIN=/home/you/.local/bin/claude   # optional, if not on PATH
+export FCPS_MODEL=sonnet                             # optional
+export FCPS_EFFORT=low                               # optional
 ```
 
-Without one, `/api/fcps-recommendations` returns **503** with
+Without it, `/api/fcps-recommendations` returns **503** with
 `code: fcps_not_configured` and the client shows "FCPS advice is turned off"
 rather than a retry button for a condition retrying can't fix.
+
+**A subscription is free per call but finite per window**, and each invocation
+carries roughly 23k tokens of CLI harness prompt whatever the payload. So the
+route is rate-limited by a cache rather than by a counter: one call per
+`(entry, gameweek, model)` per **24 hours**, and every later request that day is
+served from it.
+
+That gate is deliberately server-side. A browser cache cannot be one — the same
+manager on a phone and a laptop is two devices, cleared storage is a third, and a
+direct request to the endpoint is none of them. The cache is mirrored to disk
+(`FCPS_CACHE_DIR`, default `~/.cache/fpl/fcps`) so a gunicorn restart doesn't
+reopen the day's allowance. An unwritable cache directory degrades the gate to
+per-process rather than failing the request.
+
+`?refresh=1` bypasses the cache and spends a call.
 
 ### Optional: LLM narration
 
@@ -176,8 +197,131 @@ otherwise identical.
 
 ```bash
 export ENABLE_LLM_NARRATIVE=true
-export OPENAI_API_KEY=sk-...
 ```
+
+Uses the same Claude CLI as FCPS, so it needs no key either. **Only the first
+plan is narrated.** It used to narrate all five the optimiser returns, on a route
+with no LLM cache — one request was five calls, and the same request repeated was
+five more.
+
+### Optional: research digest
+
+The projections know last season's numbers and the fixture list. They don't know
+that a defender's 209-point season came largely from a scoring rule the ML model
+was never trained on, that a £46m signing has no Premier League minutes because
+he spent the year on loan, or that a club changed manager in February. All of
+that is published every August and none of it reaches an FPL API endpoint.
+
+A scheduled job fetches it, distils it once, and caches it; FCPS advice then
+receives it as context.
+
+```bash
+export ENABLE_RESEARCH_DIGEST=true
+python -m engine.research            # refresh now
+scripts/refresh-research.sh          # the same thing, for cron
+```
+
+**Why a digest rather than search-per-request.** Giving the request path web
+tools would undo two properties bought deliberately above. It would put
+arbitrary web text into a prompt on an internet-facing endpoint once per
+visitor, and it would turn one model call into a call plus an unbounded number
+of searches against a rate limit shared with the operator's own work. The digest
+runs **twice a day for the whole site** — 2 of the 250 daily calls — adds no
+latency to a request, and confines web content to one artefact you can read
+before it is used (`~/.cache/fpl/research/digest.json`).
+
+Pages are fetched **in Python, against a hardcoded allowlist**. The model is
+never given web tools; it only summarises text this codebase chose to hand it.
+That is the difference between "the model researched something" and "the model
+was handed a page we picked", and only the second is auditable. Override the
+list with `RESEARCH_SOURCES` (JSON `[{name, url}]`) to follow a season's article
+slugs without a redeploy.
+
+The digest is the **only** content in an FCPS prompt not sourced from FPL's own
+API, so it is fenced in `<reference_notes>` and labelled as quoted material, and
+the system prompt states that the data tables win any disagreement about a
+price, a points total or a status. A stale digest is dropped rather than served:
+yesterday's "expected to start" is exactly the claim that becomes misinformation
+once a team sheet lands.
+
+---
+
+## Protecting the model access
+
+The model is reached through a CLI authenticated with the operator's **personal
+Claude subscription**, on routes exposed to the open internet. That inverts the
+usual threat model: there is no bill to cap, and the scarce resource — the
+subscription's rate-limit window — is *shared with the operator's own Claude
+Code sessions*. Someone abusing the endpoint doesn't run up a charge; they take
+out the operator's own tooling as collateral.
+
+Two properties of the naive design made that easy, and both are fixed:
+
+**Caching is not rate limiting.** FCPS advice is cached per `(entry, gameweek,
+model)` for a day, which stops one manager re-triggering a call and does nothing
+about someone walking `user_id=1,2,3,…` through the several million entry IDs FPL
+hands out — every one a fresh key and a fresh call. Query parameters
+(`horizon`, `engine`, `max_transfers`) widen the same hole.
+
+**Narration multiplied.** Five plans, five calls, no cache, per request.
+
+### What enforces the limit
+
+| Control | Default | What it stops |
+|---|---|---|
+| Global daily ceiling | 250 calls | Enumeration, in aggregate. No caller can raise it; it is the hard backstop. |
+| Concurrency cap | 2 processes | Subprocess pile-up. Each call is a Node runtime at a couple of hundred MB; unbounded spawning exhausts memory and PIDs long before any quota. |
+| Per-client hourly limit | 10 calls/hr | One abuser spending the whole day's ceiling and locking out real users. |
+| Tool denial | all denied | The CLI is a coding agent by default. No shell, no filesystem, no network. |
+| Scratch working directory | per call | The CLI picking up this repo's `CLAUDE.md` and settings as context. |
+
+All three counters live **on disk under a lock**, not in memory. The app is
+served by gunicorn with several workers, and a per-process counter would multiply
+every limit by the worker count — a limit that reads as enforced while not being
+one. `tests/test_llm_budget.py` asserts the ceiling holds across real processes.
+
+Concurrency slots are `flock`s rather than a counter, because a counter has to be
+decremented and a process killed mid-call never gets to decrement it. The kernel
+releases a `flock` when the descriptor closes, however it closed.
+
+The ceiling is charged **on entry, not on success**: a call that failed after the
+model ran still spent the tokens, and refunding failures would make an error loop
+an unmetered retry loop.
+
+### Failure behaviour
+
+Both routes fail closed, and they fail differently on purpose:
+
+- FCPS returns **429** `fcps_budget_exhausted` or **503** `fcps_busy`. It is the
+  whole feature, so the client is told why rather than shown a spinner.
+- Narration **silently drops** the prose. It is additive garnish; a spent budget
+  must not fail a request whose real content was computed without a model.
+
+`/api/engines` reports `budget.remaining_today` so the client can explain a 429
+instead of offering a retry that cannot work. It exposes counts only — nothing
+identifies a caller.
+
+### What is *not* claimed
+
+- **`X-Forwarded-For` is ignored by default.** It is attacker-controlled unless a
+  trusted proxy overwrites it; honouring it on a directly-exposed app would let
+  anyone mint a fresh identity per request. Set `TRUST_PROXY_HEADER=true` only
+  when a reverse proxy in front of this app rewrites it.
+- **Per-client limiting is a speed bump, not an identity control.** IPs are
+  spoofable, shared behind NAT, and cheap to rotate. The global ceiling is the
+  guarantee; the per-client limit only makes it *fairly* distributed.
+- **Prompt injection surface is one artefact, not every request.** Every other
+  string in both prompts — player names, teams, prices, positions — comes from
+  FPL's own bootstrap, and the only user-controlled input is an integer entry ID.
+  The research digest is the sole exception, and it is deliberately shaped to be
+  the *only* one: fetched from an allowlist rather than searched, distilled on a
+  schedule rather than per request, fenced and labelled in the prompt, and
+  overridden by the data tables on any factual disagreement. It is readable on
+  disk before use. **Keep the rest that way**: adding the manager's own team name
+  (which managers choose freely) to a prompt would open a second, per-request
+  surface with none of those controls.
+- Command injection is structurally absent rather than filtered: arguments are
+  passed as a list with no shell, and the prompt goes in on stdin.
 
 ### Configuration
 
@@ -186,8 +330,21 @@ export OPENAI_API_KEY=sk-...
 | `PORT` | `5001` | Listen port |
 | `ALLOWED_ORIGINS` | production + localhost | Comma-separated CORS origins for `/api/*` |
 | `ENABLE_LLM_NARRATIVE` | `false` | Turn on narration |
-| `OPENAI_API_KEY` | — | Required for FCPS advice and for narration |
-| `FCPS_MODEL` | `gpt-4o-mini` | Model used for the FCPS column |
+| `FCPS_CLAUDE_BIN` | `claude` on `PATH` | Path to the Claude CLI |
+| `FCPS_MODEL` | `sonnet` | Model used for the FCPS column |
+| `NARRATIVE_MODEL` | `sonnet` | Model used for narration |
+| `FCPS_EFFORT` | `low` | Effort level passed to the CLI |
+| `FCPS_CACHE_DIR` | `~/.cache/fpl/fcps` | Where the 24h gate is persisted |
+| `LLM_DAILY_CEILING` | `250` | Global model calls per day, all routes |
+| `LLM_MAX_CONCURRENT` | `2` | Simultaneous CLI processes |
+| `LLM_CLIENT_HOURLY` | `10` | Per-client model calls per hour |
+| `LLM_BUDGET_DIR` | `~/.cache/fpl/llm-budget` | Where the counters live |
+| `ENABLE_RESEARCH_DIGEST` | `false` | Inject the news/consensus digest into FCPS advice |
+| `RESEARCH_SOURCES` | built-in allowlist | JSON `[{name, url}]` of pages to distil |
+| `RESEARCH_TTL_SECONDS` | `43200` | How long a digest stays fresh (12h) |
+| `RESEARCH_CACHE_DIR` | `~/.cache/fpl/research` | Where the digest is cached |
+| `RESEARCH_EFFORT` | `medium` | Effort level for the distillation call |
+| `TRUST_PROXY_HEADER` | `false` | Honour `X-Forwarded-For` (only behind a trusted proxy) |
 | `FPL_ML_ARTIFACTS` | `ml/artifacts` | Where to look for the trained model |
 | `FPL_ML_DATA` | `ml/_data` | Historical data cache (training only) |
 
