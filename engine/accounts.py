@@ -106,6 +106,12 @@ def init_db() -> None:
         columns = [row[1] for row in conn.execute("PRAGMA table_info(users)")]
         if "google_sub" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN google_sub TEXT")
+        # Opt-in, not opt-out. Nobody signed up to be emailed, and a deadline
+        # reminder nobody asked for is spam however useful it is.
+        if "deadline_email" not in columns:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN deadline_email INTEGER NOT NULL DEFAULT 0"
+            )
         # SQLite unique indexes permit any number of NULLs, so password-only
         # accounts coexist fine.
         conn.execute(
@@ -371,3 +377,42 @@ def has_cookie(user_id: int) -> bool:
             "SELECT 1 FROM fpl_cookies WHERE user_id = ?", (user_id,)
         ).fetchone()
     return row is not None
+
+
+# ---------------------------------------------------------------- digests
+
+
+def set_deadline_email(user_id: int, enabled: bool) -> None:
+    """Opt in or out of the pre-deadline briefing."""
+    with _lock, _connect() as conn:
+        conn.execute(
+            "UPDATE users SET deadline_email = ? WHERE id = ?",
+            (1 if enabled else 0, user_id),
+        )
+
+
+def wants_deadline_email(user_id: int) -> bool:
+    with _lock, _connect() as conn:
+        row = conn.execute(
+            "SELECT deadline_email FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    return bool(row and row["deadline_email"])
+
+
+def digest_subscribers() -> list[dict]:
+    """Everyone who opted in *and* linked a team.
+
+    Both conditions matter: a subscriber with no linked entry has nothing to be
+    briefed about, and sending them an empty digest teaches them to ignore the
+    next one.
+    """
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT u.id, u.email, l.entry_id, l.team_name, l.manager_name
+            FROM users u JOIN fpl_links l ON l.user_id = u.id
+            WHERE u.deadline_email = 1
+            ORDER BY u.id
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]

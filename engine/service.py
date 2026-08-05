@@ -25,6 +25,8 @@ from typing import Mapping, Sequence
 from . import fcps as fcps_mod
 from . import fcps_llm, fpl_client, reconstruct, research
 from . import leagues as leagues_mod
+from . import captain as captain_mod
+from . import digest
 from . import free_transfers as ft_mod
 from . import ml_scorer, money, optimizer, rules
 
@@ -48,6 +50,73 @@ class ServiceError(Exception):
 
 
 # ---------------------------------------------------------------- squad state
+
+
+def deadline_digest(entry_id: int, manager_name: str = "") -> dict:
+    """One manager's pre-deadline briefing, assembled from existing advice.
+
+    Runs no model of its own — it calls the same recommendation and captain
+    paths the app uses, so a digest and the screen can never disagree about the
+    week. Raises :class:`ServiceError` when the season hasn't started, because
+    there is no deadline to brief for.
+    """
+    state = fpl_client.season_state()
+    if not state:
+        raise ServiceError(
+            "upstream_unavailable", "Could not read the gameweek state.", status=503
+        )
+    if not state["started"]:
+        raise ServiceError(
+            "season_not_started",
+            "Briefings begin once the season is under way.",
+            status=503,
+        )
+
+    gameweek = state["gameweek"]
+    squad_state = load_squad_state(entry_id, gameweek)
+    projection = projections_for(1, ml_scorer.DEFAULT_ENGINE)
+    data = projection.data
+    teams = {int(t["id"]): t for t in data.get("teams", [])}
+    event = next(
+        (e for e in data.get("events", []) if int(e["id"]) == gameweek), {}
+    )
+
+    captain_ranking = captain_mod.rank_captains(
+        squad=squad_state["squad"],
+        picks=squad_state["picks"],
+        projections=projection.projections,
+        teams=teams,
+        gameweek=gameweek,
+        most_captained=event.get("most_captained"),
+    )
+
+    advice = recommendations(entry_id=entry_id, horizon=DEFAULT_HORIZON)
+
+    league = None
+    entry = fpl_client.entry(entry_id) or {}
+    meaningful = [
+        le for le in leagues_mod.classify_leagues(entry) if le["meaningful"]
+    ]
+    if meaningful:
+        try:
+            # The smallest league is the one the manager actually feels.
+            smallest = min(meaningful, key=lambda le: le.get("size") or 10**9)
+            league = league_analysis(entry_id, smallest["id"])
+        except ServiceError:
+            league = None
+
+    return digest.build(
+        manager_name=manager_name,
+        gameweek=gameweek,
+        deadline=state.get("deadline") or "",
+        captain_picks=captain_ranking.get("candidates")
+        or captain_ranking.get("picks")
+        or [],
+        plans=advice.get("plans") or [],
+        free_transfers=squad_state.get("free_transfers", 1),
+        squad=squad_state.get("squad") or [],
+        league=league,
+    )
 
 
 def league_analysis(entry_id: int, league_id: int, horizon: int = 5) -> dict:

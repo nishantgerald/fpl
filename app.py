@@ -44,10 +44,12 @@ from engine import captain as captain_engine
 from engine import (
     accounts,
     content,
+    digest,
     fcps_llm,
     fpl_client,
     leagues,
     llm_budget,
+    mailer,
     ml_scorer,
     narrative,
     prices,
@@ -1134,6 +1136,46 @@ def me_transfers():
             "meta": fpl_client.meta(),
         }
     )
+
+
+@app.route("/api/me/digest")
+def me_digest():
+    """Preview the pre-deadline briefing for the signed-in user.
+
+    Exists so a user can see exactly what they are opting into before they
+    agree to be emailed, and so the wording can be checked without waiting for
+    a Friday.
+    """
+    user = _current_user()
+    if user is None:
+        return _auth_required()
+    link = accounts.fpl_link(user["id"])
+    if link is None:
+        return jsonify(
+            {"code": "no_fpl_link", "error": "Link your FPL Team ID first."}
+        ), 400
+
+    briefing = service.deadline_digest(
+        link["entry_id"], manager_name=link.get("manager_name", "")
+    )
+    return jsonify(
+        {
+            **briefing,
+            "text": digest.render_text(briefing),
+            "subscribed": accounts.wants_deadline_email(user["id"]),
+            "email_configured": mailer.is_configured(),
+        }
+    )
+
+
+@app.route("/api/me/digest/subscribe", methods=["POST", "DELETE"])
+def me_digest_subscribe():
+    """Opt in or out. Opt-in by default absent: nobody signed up to be emailed."""
+    user = _current_user()
+    if user is None:
+        return _auth_required()
+    accounts.set_deadline_email(user["id"], request.method == "POST")
+    return jsonify({"subscribed": request.method == "POST"})
 
 
 @app.route("/api/me/leagues")
