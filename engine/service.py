@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import Mapping, Sequence
 
 from . import fcps as fcps_mod
-from . import fcps_llm, fpl_client
+from . import fcps_llm, fpl_client, reconstruct, research
 from . import free_transfers as ft_mod
 from . import ml_scorer, money, optimizer, rules
 
@@ -49,6 +49,34 @@ class ServiceError(Exception):
 # ---------------------------------------------------------------- squad state
 
 
+def current_picks(entry_id: int, gameweek: int) -> dict | None:
+    """The squad the manager owns *now*, not as of the last deadline.
+
+    Fetches the last locked picks and folds in any transfers made since —
+    which are public and irreversible the moment they're confirmed. Returns a
+    picks-shaped payload with ``source: "reconstructed"`` and an exact bank,
+    or ``None`` when nothing has changed since the deadline (the common case),
+    so the caller keeps the authoritative payload.
+
+    Free Hit is the one chip that rewrites history: its squad evaporates when
+    its gameweek ends, so the base rolls back one week and the Free Hit's own
+    transfers are excluded. Wildcards change nothing here — their transfers
+    are ordinary and permanent.
+    """
+    transfers = fpl_client.transfers(entry_id)
+    if not transfers:
+        return None
+    if not any(int(t.get("event") or 0) > gameweek for t in transfers):
+        return None
+
+    history = fpl_client.history(entry_id) or {}
+    base_gw = reconstruct.base_gameweek(gameweek, history.get("chips") or [])
+    base = fpl_client.picks(entry_id, base_gw)
+    if not base or not base.get("picks"):
+        return None
+    return reconstruct.reconstruct(base, transfers, gameweek)
+
+
 def load_squad_state(entry_id: int, gameweek: int) -> dict:
     """The manager's squad, bank and free transfers, from public data only.
 
@@ -67,6 +95,15 @@ def load_squad_state(entry_id: int, gameweek: int) -> dict:
             status=404,
         )
 
+    # Advice about transfers must start from the squad the manager owns *now*.
+    # Recommending the sale of a player they already sold on Tuesday isn't a
+    # recommendation, it's a bug report about our own data.
+    rebuilt = current_picks(entry_id, gameweek)
+    transfers_pending = 0
+    if rebuilt is not None:
+        picks_payload = rebuilt
+        transfers_pending = int(rebuilt.get("transfers_applied") or 0)
+
     squad: list[Mapping] = []
     missing: list[int] = []
     for pick in picks_payload["picks"]:
@@ -82,10 +119,17 @@ def load_squad_state(entry_id: int, gameweek: int) -> dict:
     bank = entry_history.get("bank")
     squad_value = entry_history.get("value")
 
-    if bank is None or squad_value is None:
+    if (bank is None or squad_value is None) and not transfers_pending:
         entry_payload = fpl_client.entry(entry_id) or {}
-        bank = entry_payload.get("last_deadline_bank")
+        bank = bank if bank is not None else entry_payload.get("last_deadline_bank")
         squad_value = entry_payload.get("last_deadline_value")
+
+    if transfers_pending:
+        # The reconstructed bank is exact; the deadline-time squad value is
+        # not, because the squad it priced no longer exists. Dropping it sends
+        # selling prices down the estimation path instead of apportioning a
+        # stale total across a changed squad.
+        squad_value = None
 
     bank = int(bank) if bank is not None else 0
     # `value` is squad selling value *plus* bank, so the squad's own selling
@@ -99,6 +143,11 @@ def load_squad_state(entry_id: int, gameweek: int) -> dict:
     derived_ft = ft_mod.derive_free_transfers(
         history_payload.get("current"), history_payload.get("chips")
     )
+    # Transfers already made this week consumed free transfers before we got
+    # here; history won't show that until the next deadline. Advice priced
+    # against transfers the manager no longer has would systematically
+    # under-count hits.
+    derived_ft = max(0, derived_ft - transfers_pending)
 
     return {
         "squad": squad,
@@ -225,6 +274,42 @@ def fcps_for() -> tuple[dict[int, dict], dict]:
     return scores, data
 
 
+def _research_digest() -> str | None:
+    """Today's news digest, when the feature is on and a fresh one exists.
+
+    Deliberately best-effort: the column is worth writing without it, so a
+    missing or stale digest degrades the advice rather than failing the request.
+    """
+    try:
+        if not research.is_enabled():
+            return None
+        record = research.current()
+        return record["digest"] if record else None
+    except Exception:
+        return None
+
+
+def fcps_is_cached(entry_id: int) -> bool:
+    """Whether advice for this entry is already cached, so no call is needed.
+
+    Lets the route meter only requests that could actually spend a model call —
+    charging a cache hit against a caller's hourly share would throttle people
+    for re-reading a page.
+
+    Cheap and side-effect-free: it reads the season state, which is itself
+    cached, and then does a dict/disk lookup. Never raises; an unknown state is
+    reported as "not cached", which errs toward metering.
+    """
+    try:
+        state = fpl_client.season_state()
+        if not state or not state["started"]:
+            return False
+        key = (entry_id, state["gameweek"], fcps_llm.model_name())
+        return fcps_llm.peek_cache(key) is not None
+    except Exception:
+        return False
+
+
 def fcps_advice(entry_id: int, refresh: bool = False) -> dict:
     """The FCPS transfer column: rank by FCPS, then ask the model to write it up.
 
@@ -290,6 +375,7 @@ def fcps_advice(entry_id: int, refresh: bool = False) -> dict:
         free_transfers=squad_state["free_transfers"],
         cache_key=(entry_id, state["gameweek"], fcps_llm.model_name()),
         refresh=refresh,
+        digest=_research_digest(),
     )
     result.update(
         {
@@ -429,3 +515,101 @@ def _decorate_team_names(plans: Sequence[Mapping], teams: Mapping[int, Mapping])
                 if ref is not None:
                     team = teams.get(ref.get("team_id"))
                     ref["team"] = str(team.get("short_name", "UNK")) if team else "UNK"
+
+
+# ---------------------------------------------------------------- draft squad
+
+# The recommended opening squad does not depend on who is asking — there are no
+# picks to read before the deadline — so it is computed once for the whole site
+# rather than per visitor. That also makes the written summary affordable: one
+# model call a day serves everyone, instead of one per manager.
+_draft_cache: dict[str, tuple] = {}
+_DRAFT_TTL_SECONDS = 3600
+
+
+def draft_squad(horizon: int = 5, engine: str = "xpts", pinned=()) -> dict:
+    """A recommended opening fifteen, for the window before the GW1 deadline.
+
+    Raises :class:`ServiceError` once the season is under way — at that point
+    the real advice routes apply and a generic draft would be actively wrong.
+    """
+    import time as _time
+
+    from . import draft
+
+    state = fpl_client.season_state()
+    if not state:
+        raise ServiceError(
+            "upstream_unavailable", "Could not read the FPL gameweek state.", status=503
+        )
+    if state["started"]:
+        raise ServiceError(
+            "season_in_progress",
+            "The season has started — use /api/recommendations for your squad.",
+            status=409,
+            gameweek=state["gameweek"],
+        )
+
+    key = f"{horizon}:{engine}:{','.join(sorted(pinned))}"
+    cached = _draft_cache.get(key)
+    if cached and _time.time() - cached[0] < _DRAFT_TTL_SECONDS:
+        return cached[1]
+
+    projection = projections_for(horizon, engine)
+    data = projection.data
+    teams = {int(t["id"]): t.get("short_name", "UNK") for t in data.get("teams", [])}
+
+    rows = draft.candidates(data.get("elements", []), projection.projections, teams)
+    built = draft.build(rows, pinned=pinned)
+    if built is None:
+        raise ServiceError(
+            "draft_unavailable",
+            "Could not assemble a legal squad from the current player data.",
+            status=503,
+        )
+
+    built.update(
+        {
+            "gameweek": state["gameweek"],
+            "gameweek_name": state["gameweek_name"],
+            "deadline": state["deadline"],
+            "horizon": horizon,
+            "engine": projection.engine,
+            "engine_requested": projection.engine_requested,
+            "pool_size": len(rows),
+            "summary": _draft_summary(built),
+        }
+    )
+    _draft_cache[key] = (_time.time(), built)
+    return built
+
+
+def _draft_summary(built: Mapping) -> dict:
+    """The written rationale, or a machine-readable reason there isn't one.
+
+    Best-effort by design: the squad is the product and it stands on its own
+    numbers. Prose is an enhancement, so a spent budget or an absent CLI must
+    degrade it rather than fail the request.
+    """
+    from . import draft_llm
+
+    try:
+        return draft_llm.summarise(built, digest=_research_digest())
+    except Exception as error:
+        return {"available": False, "reason": type(error).__name__}
+
+
+def draft_summary_is_cached(horizon: int, engine: str, pinned=()) -> bool:
+    """Whether a draft summary already exists, so the route can skip metering.
+
+    Charging a caller's hourly share for a cached response would throttle people
+    for reloading a page. Cheap and side-effect-free; never raises.
+    """
+    import time as _time
+
+    try:
+        key = f"{horizon}:{engine}:{','.join(sorted(pinned))}"
+        cached = _draft_cache.get(key)
+        return bool(cached and _time.time() - cached[0] < _DRAFT_TTL_SECONDS)
+    except Exception:
+        return False

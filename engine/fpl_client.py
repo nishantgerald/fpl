@@ -13,14 +13,26 @@ timeout, and degrades to stale data rather than failing when upstream is down.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any, Callable
 
 import requests
 
 BASE = "https://fantasy.premierleague.com/api"
+
+# Where the manager's FPL session cookie lives, if they've set one up. Outside
+# the repo by design: a credential in the working tree is one `git add -A` away
+# from being published.
+SESSION_FILE = Path(
+    os.getenv(
+        "FPL_SESSION_FILE",
+        Path.home() / ".openclaw" / "credentials" / "fpl-session",
+    )
+)
 
 # (connect, read). The connect value sits just off a multiple of 3s so it
 # doesn't line up with TCP retransmit windows.
@@ -35,12 +47,23 @@ TTL_FIXTURES = 3600
 TTL_ENTRY = 300
 TTL_PICKS = 300
 TTL_HISTORY = 1800
+# Short: a pre-deadline draft changes as the manager edits it, and showing them
+# a squad they've already changed is worse than a slightly slower page.
+TTL_MY_TEAM = 60
 
 PHOTO_CACHE_SIZE = 512
 
 
 class UpstreamUnavailable(Exception):
     """Upstream failed and we have no cached value to fall back on."""
+
+
+class NotAuthenticated(Exception):
+    """No usable session cookie. An ordinary state, not a failure.
+
+    Distinct from :class:`UpstreamUnavailable` because it must never degrade to
+    a cached value: upstream answered fine, it just declined us.
+    """
 
 
 class _Entry:
@@ -79,6 +102,11 @@ class _Cache:
 
         try:
             value = fetch()
+        except NotAuthenticated:
+            # Not an outage: upstream answered, and the answer was "no". Serving
+            # the stale entry here would pin the manager's squad to whenever the
+            # cookie expired and never tell them, so this propagates untouched.
+            raise
         except Exception as exc:
             if entry is not None:
                 return entry.value, entry.fetched_at, True
@@ -107,13 +135,206 @@ _cache = _Cache()
 _last_meta = threading.local()
 
 
-def _get_json(path: str) -> Any:
-    """One upstream GET. Returns ``None`` for a 404 so callers can distinguish."""
-    response = requests.get(f"{BASE}{path}", headers=HEADERS, timeout=TIMEOUT)
+def _get_json(path: str, cookie: str | None = None) -> Any:
+    """One upstream GET. Returns ``None`` for a 404 so callers can distinguish.
+
+    ``cookie`` authenticates as the signed-in manager. It is passed per call
+    rather than held on a session object so it can never leak onto a request
+    that didn't ask for it.
+    """
+    headers = dict(HEADERS)
+    if cookie:
+        headers["Cookie"] = cookie
+    response = requests.get(f"{BASE}{path}", headers=headers, timeout=TIMEOUT)
     if response.status_code == 404:
         return None
     response.raise_for_status()
     return response.json()
+
+
+def _session_cookie() -> str | None:
+    """The manager's FPL session cookie, if one has been provided.
+
+    Read fresh on each use rather than cached at import, so replacing an expired
+    cookie takes effect without a restart. Absent is the normal case and must
+    never be an error — the app works without it, just with less.
+    """
+    from_env = os.getenv("FPL_SESSION_COOKIE", "").strip()
+    if from_env:
+        return from_env
+    try:
+        raw = SESSION_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    # Tolerates a whole `Cookie:` header being pasted in, which is what a
+    # browser's "copy as cURL" hands you.
+    if raw.lower().startswith("cookie:"):
+        raw = raw.split(":", 1)[1].strip()
+    return raw or None
+
+
+def has_session() -> bool:
+    """Whether an authenticated read is even possible. Never returns the value."""
+    return _session_cookie() is not None
+
+
+def session_status(entry_id: int) -> dict:
+    """Whether the stored cookie still authenticates, as a reportable fact.
+
+    A session cookie dies silently: it works until it doesn't, and the first
+    sign is usually a screen that stopped filling in. This makes the state
+    checkable on demand — and on a schedule — so the answer arrives before the
+    manager notices something is wrong rather than after.
+
+    Never returns any part of the cookie, so it is safe to log, cache, expose
+    on a route and send over a chat notification.
+    """
+    if not has_session():
+        return {
+            "state": "absent",
+            "ok": False,
+            "detail": "No FPL session cookie configured.",
+        }
+
+    # Deliberately bypasses the TTL cache: a cached success would report a
+    # cookie healthy for a full minute after it stopped working, which defeats
+    # the point of asking.
+    try:
+        payload = _get_json(f"/my-team/{entry_id}/", cookie=_session_cookie())
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        if status in (401, 403):
+            return {
+                "state": "expired",
+                "ok": False,
+                "detail": "The FPL session cookie is no longer accepted. "
+                "Sign in again and replace it.",
+            }
+        return {
+            "state": "unknown",
+            "ok": False,
+            "detail": f"Upstream returned {status}.",
+        }
+    except requests.RequestException as exc:
+        # An outage says nothing about the cookie; don't cry wolf.
+        return {"state": "unknown", "ok": False, "detail": f"Upstream error: {exc}"}
+
+    if payload is None:
+        return {
+            "state": "unknown",
+            "ok": False,
+            "detail": f"Entry {entry_id} did not resolve.",
+        }
+    return {
+        "state": "valid",
+        "ok": True,
+        "detail": f"Authenticated; {len(payload.get('picks') or [])} players visible.",
+    }
+
+
+def my_team(entry_id: int, cookie: str | None = None) -> dict | None:
+    """The signed-in manager's squad — including a squad drafted pre-deadline.
+
+    The public picks endpoint 404s until the first deadline passes, because FPL
+    publishes nobody's team before then. This is the endpoint the FPL site
+    itself uses while you're building a squad, and it carries what the public
+    one lacks: selling prices, purchase prices, bank and free transfers.
+
+    ``cookie`` authenticates as a specific manager — the multi-user path, where
+    each account brings its own. Omitted, the deployment-wide cookie file/env
+    is used, which is the single-user path.
+
+    Raises :class:`NotAuthenticated` when there's no cookie or the cookie no
+    longer authenticates — the caller should degrade, not 500. Returns ``None``
+    when the id doesn't resolve.
+    """
+    cookie = cookie or _session_cookie()
+    if not cookie:
+        raise NotAuthenticated("No FPL session cookie configured.")
+
+    def fetch():
+        try:
+            return _get_json(f"/my-team/{entry_id}/", cookie=cookie)
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status in (401, 403):
+                # An expired cookie must not be served from cache as though it
+                # were a transient blip -- that would show a stale squad
+                # indefinitely and never prompt a refresh.
+                raise NotAuthenticated("FPL session cookie is expired or invalid.")
+            raise
+
+    try:
+        value, fetched_at, stale = _cache.get(
+            f"my_team:{entry_id}", TTL_MY_TEAM, fetch
+        )
+    except UpstreamUnavailable:
+        return None
+    _record(fetched_at, stale)
+    return _as_picks_payload(value)
+
+
+def transfers(entry_id: int) -> list | None:
+    """Every transfer the entry has made this season. Public — no cookie.
+
+    Returns newest-first, as upstream does. ``None`` when the id doesn't
+    resolve; an empty list is the legitimate "no transfers yet".
+    """
+    try:
+        value, fetched_at, stale = _cache.get(
+            f"transfers:{entry_id}",
+            TTL_PICKS,
+            lambda: _get_json(f"/entry/{entry_id}/transfers/"),
+        )
+    except UpstreamUnavailable:
+        return None
+    _record(fetched_at, stale)
+    return value
+
+
+def _as_picks_payload(payload: dict | None) -> dict | None:
+    """Reshape a ``/my-team/`` response to look like a ``/picks/`` one.
+
+    The two endpoints disagree about where the same facts live: picks puts bank
+    and squad value under ``entry_history``, my-team under ``transfers``. The
+    difference is an upstream quirk, so it's absorbed here rather than made the
+    caller's problem.
+    """
+    if not payload or not payload.get("picks"):
+        return None
+
+    transfers = payload.get("transfers") or {}
+    active_chip = next(
+        (
+            chip.get("name")
+            for chip in (payload.get("chips") or [])
+            if chip.get("status_for_entry") == "active"
+        ),
+        None,
+    )
+
+    picks = []
+    for pick in payload["picks"]:
+        pick = dict(pick)
+        # my-team omits `multiplier` on some responses. Positions 1-11 are the
+        # XI and 12-15 the bench in both payloads, so derive it rather than
+        # defaulting everyone to the bench.
+        if "multiplier" not in pick:
+            starting = int(pick.get("position", 99)) <= 11
+            pick["multiplier"] = (2 if pick.get("is_captain") else 1) if starting else 0
+        picks.append(pick)
+
+    return {
+        "picks": picks,
+        "entry_history": {
+            "bank": transfers.get("bank"),
+            "value": transfers.get("value"),
+        },
+        "active_chip": active_chip,
+        # Only my-team knows this, and it saves the optimiser a guess.
+        "free_transfers": transfers.get("limit"),
+        "source": "my_team",
+    }
 
 
 def _record(fetched_at: float, stale: bool) -> None:
