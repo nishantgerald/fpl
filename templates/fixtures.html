@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% from "_fdr.html" import fdr_cell %}
+{% block title %}FPL Fixture Ticker {{ season }} — Every Club, Ranked{% endblock %}
+{% block description %}Fantasy Premier League fixture difficulty for every club over the next {{ count }} gameweeks, easiest run first, with blanks, doubles and upcoming fixture swings.{% endblock %}
+{% block content %}
+<h1>FPL fixture ticker</h1>
+<p class="sub">GW{{ start }}–GW{{ start + count - 1 }} for all 20 clubs, easiest
+run first. Lower average difficulty means an easier run.</p>
+<p class="updated">Updated from the official FPL API</p>
+
+{% if swings %}
+<h2>Runs about to change</h2>
+<div class="card">
+  <p class="sub" style="margin-bottom:10px">Buy a gameweek before a run improves,
+  so you own all of it.</p>
+  <ul class="rules">
+    {% for s in swings %}<li>{{ s.message }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<h2>Difficulty by gameweek</h2>
+<div class="wrap">
+<table>
+  <thead><tr>
+    <th>Club</th>
+    {% for gw in gameweeks %}<th>GW{{ gw }}</th>{% endfor %}
+    <th class="num">Avg</th>
+  </tr></thead>
+  <tbody>
+  {% for t in teams %}
+    <tr>
+      <td><strong>{{ t.short_name }}</strong></td>
+      {% for c in t.cells %}
+        <td>{{ fdr_cell(c.label, c.fdr) }}</td>
+      {% endfor %}
+      <td class="num"><strong>{{ '%.2f'|format(t.avg_fdr) }}</strong></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="sub">(a) = away · BLANK = no fixture · two opponents in a cell = double gameweek</p>
+{% endblock %}

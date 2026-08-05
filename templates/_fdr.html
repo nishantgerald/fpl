@@ -1,0 +1,3 @@
+{% macro fdr_cell(label, fdr) -%}
+<span class="fdr {% if fdr is none %}fb{% else %}f{{ fdr|round|int }}{% endif %}">{{ label }}</span>
+{%- endmacro %}

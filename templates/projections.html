@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}FPL Predicted Points {{ season }} — Every Player{% endblock %}
+{% block description %}Expected points for every Fantasy Premier League player over the next {{ horizon }} gameweeks, with per-gameweek figures, fixtures and prices.{% endblock %}
+{% block content %}
+<h1>FPL predicted points</h1>
+<p class="sub">Expected points for the next {{ horizon }} gameweeks, adjusted for
+expected minutes, availability and fixture difficulty.</p>
+<p class="updated">Updated from the official FPL API{% if gameweek %} · from Gameweek {{ gameweek }}{% endif %}</p>
+
+{% for group in groups %}
+<h2>{{ group.title }}</h2>
+<div class="wrap">
+<table>
+  <thead><tr>
+    <th>#</th><th>Player</th><th>Team</th><th class="num">Price</th>
+    {% for gw in gameweeks %}<th class="num">GW{{ gw }}</th>{% endfor %}
+    <th class="num">Total</th>
+  </tr></thead>
+  <tbody>
+  {% for p in group.players %}
+    <tr>
+      <td class="rank">{{ loop.index }}</td>
+      <td><a href="/players/{{ p.slug }}">{{ p.web_name }}</a></td>
+      <td>{{ p.team }}</td>
+      <td class="num">£{{ '%.1f'|format(p.price) }}m</td>
+      {% for v in p.per_gameweek %}<td class="num">{{ '%.1f'|format(v) }}</td>{% endfor %}
+      <td class="num"><strong>{{ '%.1f'|format(p.horizon_xpts) }}</strong></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endfor %}
+
+<div class="card">
+  <p class="verdict">Use these to compare players, not to predict exact scores.
+  A projection is an average over outcomes that have not happened yet — the
+  useful question is which of two players is more likely to return, not what
+  either will score.</p>
+</div>
+{% endblock %}

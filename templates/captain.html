@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}FPL Captain Picks {% if gameweek %}Gameweek {{ gameweek }}{% endif %} — Best Armband Options{% endblock %}
+{% block description %}The best Fantasy Premier League captain picks{% if gameweek %} for Gameweek {{ gameweek }}{% endif %}, ranked by expected points with the doubled score shown.{% endblock %}
+{% block content %}
+<h1>Best FPL captain picks{% if gameweek %}, Gameweek {{ gameweek }}{% endif %}</h1>
+<p class="sub">Ranked by expected points. The armband doubles whatever they
+score — including nothing.</p>
+<p class="updated">Updated from the official FPL API</p>
+
+<div class="wrap">
+<table>
+  <thead><tr>
+    <th>#</th><th>Player</th><th>Pos</th><th>Team</th><th>Fixture</th>
+    <th class="num">Price</th><th class="num">Predicted</th><th class="num">If captained</th>
+  </tr></thead>
+  <tbody>
+  {% for c in picks %}
+    <tr>
+      <td class="rank">{{ loop.index }}</td>
+      <td><a href="/players/{{ c.slug }}">{{ c.web_name }}</a></td>
+      <td>{{ c.position }}</td><td>{{ c.team }}</td>
+      <td>{{ c.fixture }}</td>
+      <td class="num">£{{ '%.1f'|format(c.price) }}m</td>
+      <td class="num">{{ '%.1f'|format(c.xpts) }}</td>
+      <td class="num"><strong>{{ '%.1f'|format(c.xpts_captained) }}</strong></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h2>How to choose</h2>
+<div class="card">
+  <ul class="rules">
+    <li>Start at the top. The gap between first and second is usually smaller
+        than it looks — either is defensible.</li>
+    <li>When two are close, take the one whose minutes are safer. The armband
+        doubles a blank as readily as a haul.</li>
+    <li>Pick a vice-captain certain to start. They inherit the armband only if
+        your captain does not play at all.</li>
+    <li>In a mini-league, captaining what your rivals own protects a lead;
+        going different chases one.</li>
+  </ul>
+</div>
+{% endblock %}

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% from "_fdr.html" import fdr_cell %}
+{% block title %}{{ p.web_name }} FPL Prediction {{ season }} — Price, xPts & Fixtures{% endblock %}
+{% block description %}{{ p.web_name }} ({{ p.team }}, {{ p.position }}, £{{ '%.1f'|format(p.price) }}m) projects {{ '%.1f'|format(p.horizon_xpts) }} points over the next {{ p.horizon }} gameweeks. Gameweek-by-gameweek breakdown and fixtures.{% endblock %}
+{% block content %}
+<h1>{{ p.full_name or p.web_name }}</h1>
+<p class="sub">{{ p.position }} · {{ p.team }} · £{{ '%.1f'|format(p.price) }}m
+  {%- if p.rank_in_position == 1 %} · <strong>highest-projected {{ p.position }}</strong>
+  {%- else %} · #{{ p.rank_in_position }} of {{ p.position_total }} {{ p.position }}s{% endif %}</p>
+<p class="updated">Updated from the official FPL API</p>
+
+{% if p.news %}<div class="card"><strong>Team news:</strong> {{ p.news }}</div>{% endif %}
+
+<div class="tiles">
+  <div class="tile"><div class="k">Price</div><div class="v">£{{ '%.1f'|format(p.price) }}m</div></div>
+  <div class="tile"><div class="k">Next GW</div><div class="v">{{ '%.1f'|format(p.xpts_next) }}</div></div>
+  <div class="tile"><div class="k">{{ p.horizon }} GW total</div><div class="v">{{ '%.1f'|format(p.horizon_xpts) }}</div></div>
+  <div class="tile"><div class="k">Per £1m</div><div class="v">{{ '%.1f'|format(p.value) }}</div></div>
+  <div class="tile"><div class="k">Ownership</div><div class="v">{{ '%.1f'|format(p.ownership) }}%</div></div>
+</div>
+
+<h2>Should you pick {{ p.web_name }}?</h2>
+<div class="card"><p class="verdict">{{ verdict }}</p></div>
+
+<h2>{{ p.web_name }} predicted points, gameweek by gameweek</h2>
+<div class="wrap">
+<table>
+  <thead><tr><th>GW</th><th>Fixture</th><th>Difficulty</th><th class="num">Predicted</th></tr></thead>
+  <tbody>
+  {% for g in p.per_gameweek %}
+    <tr>
+      <td>GW{{ g.gameweek }}</td>
+      <td>{{ fdr_cell(g.label, g.fdr) }}</td>
+      <td>{% if g.fdr %}{{ g.fdr }}{% else %}—{% endif %}</td>
+      <td class="num"><strong>{{ '%.1f'|format(g.xpts) }}</strong></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% set first = p.per_gameweek|selectattr('components')|first %}
+{% if first %}
+<h2>Where the points come from</h2>
+<p class="sub">Gameweek {{ first.gameweek }}, {{ first.label }} — the parts that
+sum to {{ '%.1f'|format(first.xpts) }}.</p>
+<div class="wrap">
+<table>
+  <thead><tr><th>Component</th><th class="num">Points</th></tr></thead>
+  <tbody>
+  {% for c in first.components %}
+    <tr><td style="text-transform:capitalize">{{ c.name }}</td>
+        <td class="num">{{ '%+.2f'|format(c.value) }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+{% if p.alternatives %}
+<h2>Other {{ p.position }}s to compare</h2>
+<div class="wrap">
+<table>
+  <thead><tr><th>Player</th><th>Team</th><th class="num">Price</th><th class="num">{{ p.horizon }} GW</th></tr></thead>
+  <tbody>
+  {% for a in p.alternatives %}
+    <tr><td><a href="/players/{{ a.slug }}">{{ a.web_name }}</a></td>
+        <td>{{ a.team }}</td>
+        <td class="num">£{{ '%.1f'|format(a.price) }}m</td>
+        <td class="num">{{ '%.1f'|format(a.horizon_xpts) }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

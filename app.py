@@ -29,12 +29,21 @@ from urllib.parse import urlencode
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, redirect, request, send_from_directory
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+)
 from flask_cors import CORS
 
 from engine import captain as captain_engine
 from engine import (
     accounts,
+    content,
     fcps_llm,
     fpl_client,
     llm_budget,
@@ -271,9 +280,262 @@ def _safe_float(value, default=0.0):
 # ------------------------------------------------------------------ routes
 
 
+# ------------------------------------------------- public, indexable pages
+#
+# The Flutter bundle is invisible to a search engine: everything it shows is
+# assembled by JavaScript in the visitor's browser after load, so a crawler
+# fetching this domain sees an empty document and concludes the site has no
+# content. These pages are the same numbers as the API, rendered as real HTML
+# at stable URLs, so the projections can actually be found. They read from
+# `service`, never from a second model, so a page and the app cannot quote
+# different figures for the same player.
+
+SEASON_LABEL = os.getenv("SEASON_LABEL", "2026/27")
+PAGE_HORIZON = 5
+
+
+def _canonical(path: str) -> str:
+    base = os.getenv("PUBLIC_BASE_URL", request.host_url.rstrip("/"))
+    return f"{base.rstrip('/')}{path}"
+
+
+def _page_context():
+    """Projections, elements and slugs — everything a public page starts from."""
+    projection_set = service.projections_for(PAGE_HORIZON, ml_scorer.DEFAULT_ENGINE)
+    data = projection_set.data
+    elements = [
+        e
+        for e in data.get("elements", [])
+        if rules.position_of(e) in ("GKP", "DEF", "MID", "FWD")
+    ]
+    return {
+        "projections": projection_set.projections,
+        "elements": elements,
+        "teams": {
+            int(t["id"]): t.get("short_name", "UNK") for t in data.get("teams", [])
+        },
+        "slugs": content.build_slug_index(elements),
+        "gameweeks": projection_set.gameweeks,
+    }
+
+
+def _ranked_rows(ctx, position=None, limit=None):
+    """Players sorted by horizon xPts, shaped for a table row."""
+    rows = []
+    for element in ctx["elements"]:
+        if position and rules.position_of(element) != position:
+            continue
+        projection = ctx["projections"].get(int(element["id"]))
+        if projection is None:
+            continue
+        rows.append(
+            {
+                "id": int(element["id"]),
+                "slug": content.player_slug(element),
+                "web_name": element.get("web_name", ""),
+                "team": ctx["teams"].get(int(element.get("team", 0)), "UNK"),
+                "position": rules.position_of(element),
+                "price": int(element.get("now_cost", 0)) / 10,
+                "xpts_next": float(projection.get("xpts_next") or 0.0),
+                "horizon_xpts": float(projection.get("horizon_xpts") or 0.0),
+                "per_gameweek": [
+                    g["xpts"] for g in projection.get("per_gameweek", [])
+                ],
+            }
+        )
+    rows.sort(key=lambda r: (-r["horizon_xpts"], r["id"]))
+    return rows[:limit] if limit else rows
+
+
 @app.route("/")
 def home():
-    return redirect("/app/", code=302)
+    ctx = _page_context()
+    state = fpl_client.season_state() or {}
+    return render_template(
+        "landing.html",
+        canonical=_canonical("/"),
+        season=SEASON_LABEL,
+        horizon=PAGE_HORIZON,
+        gameweek=state.get("gameweek"),
+        top=_ranked_rows(ctx, limit=20),
+    )
+
+
+@app.route("/projections")
+def projections_page():
+    ctx = _page_context()
+    state = fpl_client.season_state() or {}
+    groups = [{"title": "Top 40 overall", "players": _ranked_rows(ctx, limit=40)}]
+    for position, title in (
+        ("GKP", "Goalkeepers"),
+        ("DEF", "Defenders"),
+        ("MID", "Midfielders"),
+        ("FWD", "Forwards"),
+    ):
+        groups.append(
+            {"title": title, "players": _ranked_rows(ctx, position, limit=25)}
+        )
+    return render_template(
+        "projections.html",
+        canonical=_canonical("/projections"),
+        season=SEASON_LABEL,
+        horizon=PAGE_HORIZON,
+        gameweek=state.get("gameweek"),
+        gameweeks=ctx["gameweeks"],
+        groups=groups,
+    )
+
+
+@app.route("/players")
+def players_index_page():
+    ctx = _page_context()
+    groups = []
+    for position, title in (
+        ("GKP", "Goalkeepers"),
+        ("DEF", "Defenders"),
+        ("MID", "Midfielders"),
+        ("FWD", "Forwards"),
+    ):
+        groups.append(
+            {"title": title, "players": _ranked_rows(ctx, position, limit=30)}
+        )
+    return render_template(
+        "players_index.html",
+        canonical=_canonical("/players"),
+        season=SEASON_LABEL,
+        groups=groups,
+    )
+
+
+@app.route("/players/<slug>")
+def player_page(slug):
+    ctx = _page_context()
+    element_id = ctx["slugs"].get(slug)
+    if element_id is None:
+        return render_template("base.html", canonical=_canonical("/players")), 404
+
+    element = next(e for e in ctx["elements"] if int(e["id"]) == element_id)
+    position = rules.position_of(element)
+    same_position = _ranked_rows(ctx, position)
+    rank = next(
+        (i for i, r in enumerate(same_position, 1) if r["id"] == element_id),
+        len(same_position),
+    )
+    alternatives = [r for r in same_position[:6] if r["id"] != element_id][:5]
+
+    page = content.player_page(
+        element,
+        ctx["projections"][element_id],
+        ctx["teams"].get(int(element.get("team", 0)), "UNK"),
+        rank_in_position=rank,
+        position_total=len(same_position),
+        alternatives=alternatives,
+        horizon=PAGE_HORIZON,
+    )
+    return render_template(
+        "player.html",
+        canonical=_canonical(f"/players/{slug}"),
+        season=SEASON_LABEL,
+        p=page,
+        verdict=content.verdict(page),
+    )
+
+
+@app.route("/captain")
+def captain_page():
+    ctx = _page_context()
+    state = fpl_client.season_state() or {}
+    picks = []
+    for row in _global_captain_ranking(15):
+        element = next(
+            (e for e in ctx["elements"] if int(e["id"]) == row["id"]), None
+        )
+        picks.append(
+            {
+                **row,
+                "slug": content.player_slug(element) if element else "",
+                "fixture": " + ".join(
+                    f"{f['opponent']} ({'H' if f['home'] else 'A'})"
+                    for f in row["fixtures"]
+                ),
+            }
+        )
+    return render_template(
+        "captain.html",
+        canonical=_canonical("/captain"),
+        season=SEASON_LABEL,
+        gameweek=state.get("gameweek"),
+        picks=picks,
+    )
+
+
+@app.route("/fixtures")
+def fixtures_page():
+    state = fpl_client.season_state()
+    if not state:
+        return render_template("base.html", canonical=_canonical("/fixtures")), 503
+    start, count = state["gameweek"], 8
+    data = fpl_client.bootstrap()
+    result = ticker.build_ticker(
+        fpl_client.fixtures() or [], data.get("teams", []), start, count
+    )
+    teams = sorted(result.get("teams", []), key=lambda t: t.get("avg_fdr", 5))
+    for team in teams:
+        for cell in team.get("cells", []):
+            fixtures = cell.get("fixtures") or []
+            cell["label"] = (
+                " + ".join(
+                    f"{f['opponent']}{'' if f['home'] else ' (a)'}" for f in fixtures
+                )
+                or "BLANK"
+            )
+            cell["fdr"] = (
+                round(sum(f["fdr"] for f in fixtures) / len(fixtures), 1)
+                if fixtures
+                else None
+            )
+    return render_template(
+        "fixtures.html",
+        canonical=_canonical("/fixtures"),
+        season=SEASON_LABEL,
+        start=start,
+        count=count,
+        gameweeks=list(range(start, start + count)),
+        teams=teams,
+        swings=result.get("swings", []),
+    )
+
+
+@app.route("/robots.txt")
+def robots():
+    return Response(
+        "User-agent: *\nAllow: /\nDisallow: /api/\n\n"
+        f"Sitemap: {_canonical('/sitemap.xml')}\n",
+        mimetype="text/plain",
+    )
+
+
+@app.route("/sitemap.xml")
+def sitemap():
+    """Every indexable URL. Player pages are capped: 700 near-identical pages
+    would compete with each other for the same queries rather than rank."""
+    urls = [("/", "daily", "1.0"), ("/projections", "hourly", "0.9"),
+            ("/captain", "hourly", "0.9"), ("/fixtures", "daily", "0.8"),
+            ("/players", "daily", "0.8")]
+    ctx = _page_context()
+    for row in _ranked_rows(ctx, limit=content.INDEXABLE_PLAYER_COUNT):
+        urls.append((f"/players/{row['slug']}", "daily", "0.7"))
+
+    body = ["<?xml version='1.0' encoding='UTF-8'?>",
+            "<urlset xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'>"]
+    for path, freq, priority in urls:
+        body.append(
+            f"<url><loc>{_canonical(path)}</loc>"
+            f"<changefreq>{freq}</changefreq>"
+            f"<priority>{priority}</priority></url>"
+        )
+    body.append("</urlset>")
+    return Response("\n".join(body), mimetype="application/xml")
 
 
 @app.route("/api/players", methods=["GET"])

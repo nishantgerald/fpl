@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}FPL Expected Points {{ season }} — Projections That Show Their Work{% endblock %}
+{% block description %}Free Fantasy Premier League projections for every player, broken down gameweek by gameweek so you can see where each number comes from.{% endblock %}
+{% block content %}
+<h1>Projections that show their work</h1>
+<p class="sub">Expected points for every Fantasy Premier League player, broken down
+gameweek by gameweek — the fixture, the difficulty, and which parts of the game
+each point comes from.</p>
+<p class="updated">Updated from the official FPL API{% if gameweek %} · Gameweek {{ gameweek }}{% endif %}</p>
+
+<div class="card">
+  <p class="verdict"><strong>Most tools give you a number. This one shows the
+  arithmetic behind it</strong> — clean sheet, defensive contribution, goals,
+  assists, bonus — summing to the total, next to the fixture that produced it.
+  If a projection looks wrong, you can see exactly why, instead of taking it
+  on trust.</p>
+</div>
+
+<h2>Top projected players, next {{ horizon }} gameweeks</h2>
+<div class="wrap">
+<table>
+  <thead><tr>
+    <th>#</th><th>Player</th><th>Pos</th><th>Team</th>
+    <th class="num">Price</th><th class="num">Next GW</th><th class="num">{{ horizon }} GW</th>
+  </tr></thead>
+  <tbody>
+  {% for p in top %}
+    <tr>
+      <td class="rank">{{ loop.index }}</td>
+      <td><a href="/players/{{ p.slug }}">{{ p.web_name }}</a></td>
+      <td>{{ p.position }}</td><td>{{ p.team }}</td>
+      <td class="num">£{{ '%.1f'|format(p.price) }}m</td>
+      <td class="num">{{ '%.1f'|format(p.xpts_next) }}</td>
+      <td class="num"><strong>{{ '%.1f'|format(p.horizon_xpts) }}</strong></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="sub"><a href="/projections">See every player →</a></p>
+
+<h2>How these projections are built</h2>
+<div class="card">
+  <ul class="rules">
+    <li>Expected minutes first. A hot-form substitute is not a better pick than
+        a nailed starter, however good his per-90 numbers look.</li>
+    <li>Each fixture scored on its own, so a blank gameweek scores zero and a
+        double scores twice — rather than an average that hides both.</li>
+    <li>Every component priced separately and summed, so the breakdown
+        <em>is</em> the projection rather than a story printed beside it.</li>
+    <li>Rates from small samples are regressed toward the positional average.
+        Two minutes of football is not evidence of anything.</li>
+  </ul>
+</div>
+{% endblock %}

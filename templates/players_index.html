@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}FPL Player Predictions {{ season }} — Every Player Page{% endblock %}
+{% block description %}Individual Fantasy Premier League prediction pages for every notable player, with gameweek-by-gameweek expected points and fixtures.{% endblock %}
+{% block content %}
+<h1>FPL player predictions</h1>
+<p class="sub">A page per player: projected points gameweek by gameweek, the
+fixtures behind them, and where each point comes from.</p>
+<p class="updated">Updated from the official FPL API</p>
+{% for group in groups %}
+<h2>{{ group.title }}</h2>
+<div class="links">
+  {% for p in group.players %}
+    <a href="/players/{{ p.slug }}">{{ p.web_name }} <span style="color:var(--muted)">{{ '%.1f'|format(p.horizon_xpts) }}</span></a>
+  {% endfor %}
+</div>
+{% endfor %}
+{% endblock %}
