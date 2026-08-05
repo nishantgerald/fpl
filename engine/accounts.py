@@ -94,6 +94,13 @@ def init_db() -> None:
                 manager_name TEXT,
                 linked_at REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS password_resets (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                used_at REAL
+            );
             CREATE TABLE IF NOT EXISTS fpl_cookies (
                 user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                 ciphertext BLOB NOT NULL,
@@ -416,3 +423,104 @@ def digest_subscribers() -> list[dict]:
             """
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------- password resets
+
+# Long enough to survive a slow inbox, short enough that a link found later in
+# a forwarded email or a shared screen is already dead.
+RESET_TTL_SECONDS = 3600
+
+# One live link per account. Requesting a second invalidates the first, so a
+# user who clicks "forgot password" three times cannot leave three working keys
+# to their account lying in an inbox.
+def create_reset_token(email: str) -> tuple[str, dict] | None:
+    """Mint a reset token for ``email``, or ``None`` if nobody has that address.
+
+    The caller must **not** vary its response on the return value. Telling an
+    anonymous caller whether an address is registered is an enumeration oracle,
+    and the whole point of a reset flow is that it is reachable by someone who
+    is not signed in.
+
+    Only a hash of the token is stored. A leaked database then yields no usable
+    reset links, the same reasoning that applies to passwords.
+    """
+    email = (email or "").strip().lower()
+    with _lock, _connect() as conn:
+        row = conn.execute(
+            "SELECT id, email FROM users WHERE email = ?", (email,)
+        ).fetchone()
+        if row is None:
+            return None
+
+        token = secrets.token_urlsafe(32)
+        now = time.time()
+        conn.execute("DELETE FROM password_resets WHERE user_id = ?", (row["id"],))
+        conn.execute(
+            "INSERT INTO password_resets (token_hash, user_id, created_at, expires_at)"
+            " VALUES (?, ?, ?, ?)",
+            (_hash_token(token), row["id"], now, now + RESET_TTL_SECONDS),
+        )
+    return token, {"id": row["id"], "email": row["email"]}
+
+
+def _hash_token(token: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def reset_password(token: str, password: str) -> dict:
+    """Consume a reset token and set a new password.
+
+    Every existing session for that user is revoked. Someone resetting a
+    password may be doing it because they think somebody else has it, and
+    leaving the intruder's session alive would defeat the exercise.
+    """
+    if len(password or "") < MIN_PASSWORD_LENGTH:
+        raise AccountError(
+            "weak_password",
+            f"Password must be at least {MIN_PASSWORD_LENGTH} characters.",
+        )
+
+    token_hash = _hash_token(token or "")
+    now = time.time()
+    with _lock, _connect() as conn:
+        row = conn.execute(
+            "SELECT user_id, expires_at, used_at FROM password_resets"
+            " WHERE token_hash = ?",
+            (token_hash,),
+        ).fetchone()
+        # One message for missing, expired and already-used. Distinguishing
+        # them tells someone holding a stale link which kind of stale it is,
+        # which helps nobody but them.
+        if row is None or row["used_at"] is not None or row["expires_at"] < now:
+            raise AccountError(
+                "invalid_reset_token",
+                "That reset link is invalid or has expired. Request a new one.",
+            )
+
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (generate_password_hash(password), row["user_id"]),
+        )
+        conn.execute(
+            "UPDATE password_resets SET used_at = ? WHERE token_hash = ?",
+            (now, token_hash),
+        )
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["user_id"],))
+        user = conn.execute(
+            "SELECT id, email FROM users WHERE id = ?", (row["user_id"],)
+        ).fetchone()
+
+    return {"id": user["id"], "email": user["email"]}
+
+
+def purge_expired_resets() -> int:
+    """Drop spent and expired tokens. Cheap hygiene, safe to call any time."""
+    with _lock, _connect() as conn:
+        cursor = conn.execute(
+            "DELETE FROM password_resets WHERE expires_at < ? OR used_at IS NOT NULL",
+            (time.time(),),
+        )
+        return cursor.rowcount

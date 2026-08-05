@@ -177,7 +177,7 @@ def project_all(
     try:
         raw = predictor.score(elements, fixture_index, gameweeks, team_games)
     except Exception as error:  # never let inference take down the endpoint
-        print(f"[ml] scoring failed, falling back to xpts: {type(error).__name__}: {error}")
+        print(f"[ml] scoring failed, falling back to xpts: {type(error).__name__}: {error}", flush=True)
         return baseline, "xpts"
 
     elements_by_id = {int(e["id"]): e for e in elements}

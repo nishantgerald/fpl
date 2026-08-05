@@ -116,7 +116,7 @@ def read_image(image: bytes, prompt: str, suffix: str = ".png") -> str:
     if completed.returncode != 0:
         # stderr can contain paths and account details; the code is enough for
         # the client and the detail belongs in the server log.
-        print(f"[vision] exit {completed.returncode}: {completed.stderr[:400]}")
+        print(f"[vision] exit {completed.returncode}: {completed.stderr[:400]}", flush=True)
         raise VisionUnavailable(
             "vision_upstream_error", "The model could not read that screenshot."
         )

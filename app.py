@@ -971,6 +971,100 @@ def auth_login():
     return jsonify({"token": token, "user": user})
 
 
+def _reset_email(token: str, email: str) -> tuple[str, str]:
+    link = f"{_canonical('/app/')}#/reset?token={token}"
+    minutes = accounts.RESET_TTL_SECONDS // 60
+    text = (
+        "Someone asked to reset the password for your FPL Companion account.\n\n"
+        f"Open this link to choose a new one:\n{link}\n\n"
+        f"The link works once and expires in {minutes} minutes.\n\n"
+        "If this wasn't you, ignore this email — nothing has changed, and your "
+        "password still works.\n"
+    )
+    html = (
+        '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,'
+        'Roboto,Helvetica,Arial,sans-serif;max-width:520px;margin:0 auto">'
+        "<p>Someone asked to reset the password for your FPL Companion "
+        "account.</p>"
+        f'<p><a href="{link}" style="display:inline-block;background:#37003c;'
+        'color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;'
+        'font-weight:600">Choose a new password</a></p>'
+        f"<p style=\"font-size:13px;color:#6b7280\">The link works once and "
+        f"expires in {minutes} minutes.</p>"
+        '<p style="font-size:13px;color:#6b7280">If this wasn\'t you, ignore '
+        "this email — nothing has changed, and your password still works.</p>"
+        "</div>"
+    )
+    return text, html
+
+
+@app.route("/api/auth/password-reset/request", methods=["POST"])
+def auth_password_reset_request():
+    """Start a password reset.
+
+    The response is identical whether or not the address is registered. An
+    unauthenticated endpoint that says "no such account" is an enumeration
+    oracle, and this one is necessarily reachable by someone not signed in —
+    so the *email* is sent only to a real account, while the *answer* tells
+    the caller nothing.
+    """
+    if _auth_throttled(_client_id()):
+        return jsonify(
+            {"code": "throttled", "error": "Too many attempts. Try again later."}
+        ), 429
+
+    body = request.get_json(silent=True) or {}
+    minted = accounts.create_reset_token(body.get("email", ""))
+
+    if minted is not None:
+        token, user = minted
+        text, html = _reset_email(token, user["email"])
+        delivery = mailer.send(
+            to=user["email"],
+            subject="Reset your FPL Companion password",
+            text=text,
+            html=html,
+        )
+        if not delivery.sent:
+            # Logged, never returned: the caller must not learn from the
+            # response that an account exists here either.
+            print(f"[reset] could not send to user {user['id']}: {delivery.reason}", flush=True)
+            if app.debug or os.getenv("RESET_LINK_TO_LOG", "").lower() == "true":
+                print(f"[reset] link for {user['email']}: /app/#/reset?token={token}", flush=True)
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "If that email has an account, a reset link is on its way.",
+        }
+    )
+
+
+@app.route("/api/auth/password-reset/confirm", methods=["POST"])
+def auth_password_reset_confirm():
+    """Consume a reset link and set the new password, returning a session.
+
+    Signing the user straight in is deliberate: they have just proved control
+    of the mailbox and chosen a password, so making them type it again buys
+    nothing but a chance to mistype it.
+    """
+    if _auth_throttled(_client_id()):
+        return jsonify(
+            {"code": "throttled", "error": "Too many attempts. Try again later."}
+        ), 429
+
+    body = request.get_json(silent=True) or {}
+    try:
+        user = accounts.reset_password(
+            body.get("token", ""), body.get("password", "")
+        )
+    except accounts.AccountError as exc:
+        return jsonify({"code": exc.code, "error": str(exc)}), 400
+
+    token = accounts.authenticate(user["email"], body.get("password", ""))
+    return jsonify({"token": token, "user": user})
+
+
 @app.route("/api/auth/logout", methods=["POST"])
 def auth_logout():
     accounts.logout(_bearer_token())
