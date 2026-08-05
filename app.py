@@ -46,6 +46,7 @@ from engine import (
     content,
     fcps_llm,
     fpl_client,
+    leagues,
     llm_budget,
     ml_scorer,
     narrative,
@@ -1133,6 +1134,61 @@ def me_transfers():
             "meta": fpl_client.meta(),
         }
     )
+
+
+@app.route("/api/me/leagues")
+def me_leagues():
+    """The signed-in user's mini-leagues, discovered from their entry.
+
+    Never asked for. Making a user hunt for a League ID is making them leave.
+    """
+    user = _current_user()
+    if user is None:
+        return _auth_required()
+    link = accounts.fpl_link(user["id"])
+    if link is None:
+        return jsonify(
+            {"code": "no_fpl_link", "error": "Link your FPL Team ID first."}
+        ), 400
+
+    entry = fpl_client.entry(link["entry_id"])
+    if entry is None:
+        return jsonify(
+            {"code": "entry_not_found", "error": "Could not read your entry."}
+        ), 404
+
+    all_leagues = leagues.classify_leagues(entry)
+    return jsonify(
+        {
+            "leagues": [le for le in all_leagues if le["meaningful"]],
+            # Kept, but separated: FPL auto-enrols everyone into country and
+            # club leagues with millions of members, and ranking advice about
+            # those is noise dressed as insight.
+            "auto_enrolled": [le for le in all_leagues if not le["meaningful"]],
+            "meta": fpl_client.meta(),
+        }
+    )
+
+
+@app.route("/api/me/league/<int:league_id>")
+def me_league(league_id):
+    """Standings, rival exposure and a chase-or-protect read for one league."""
+    user = _current_user()
+    if user is None:
+        return _auth_required()
+    link = accounts.fpl_link(user["id"])
+    if link is None:
+        return jsonify(
+            {"code": "no_fpl_link", "error": "Link your FPL Team ID first."}
+        ), 400
+
+    result = service.league_analysis(
+        link["entry_id"],
+        league_id,
+        horizon=_int_arg("horizon", service.DEFAULT_HORIZON, 1, service.MAX_HORIZON),
+    )
+    result["meta"] = fpl_client.meta()
+    return jsonify(result)
 
 
 @app.route("/api/me/recommendations")

@@ -50,6 +50,8 @@ TTL_HISTORY = 1800
 # Short: a pre-deadline draft changes as the manager edits it, and showing them
 # a squad they've already changed is worse than a slightly slower page.
 TTL_MY_TEAM = 60
+# Standings only move when a gameweek scores.
+TTL_LEAGUE = 900
 
 PHOTO_CACHE_SIZE = 512
 
@@ -272,6 +274,27 @@ def my_team(entry_id: int, cookie: str | None = None) -> dict | None:
         return None
     _record(fetched_at, stale)
     return _as_picks_payload(value)
+
+
+def league_standings(league_id: int, page: int = 1) -> dict | None:
+    """One page of a classic league table. Public — no cookie.
+
+    Cached for longer than picks: standings only move when a gameweek scores,
+    and a mini-league page that re-fetches per visitor would multiply one
+    league's traffic by its membership.
+    """
+    try:
+        value, fetched_at, stale = _cache.get(
+            f"league:{league_id}:{page}",
+            TTL_LEAGUE,
+            lambda: _get_json(
+                f"/leagues-classic/{league_id}/standings/?page_standings={page}"
+            ),
+        )
+    except UpstreamUnavailable:
+        return None
+    _record(fetched_at, stale)
+    return value
 
 
 def transfers(entry_id: int) -> list | None:

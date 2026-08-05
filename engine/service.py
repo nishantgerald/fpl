@@ -24,6 +24,7 @@ from typing import Mapping, Sequence
 
 from . import fcps as fcps_mod
 from . import fcps_llm, fpl_client, reconstruct, research
+from . import leagues as leagues_mod
 from . import free_transfers as ft_mod
 from . import ml_scorer, money, optimizer, rules
 
@@ -47,6 +48,73 @@ class ServiceError(Exception):
 
 
 # ---------------------------------------------------------------- squad state
+
+
+def league_analysis(entry_id: int, league_id: int, horizon: int = 5) -> dict:
+    """Standings, rival exposure and posture for one mini-league.
+
+    Fetching a rival's squad costs one upstream request each, so this is capped
+    to the managers close enough to catch or be caught by — see
+    :data:`engine.leagues.DEFAULT_RIVAL_WINDOW`. Analysing a 200-member league
+    in full would cost 200 requests to answer a question about the eight people
+    who matter.
+    """
+    payload = fpl_client.league_standings(league_id)
+    if not payload:
+        raise ServiceError(
+            "league_not_found", f"No league found with ID {league_id}.", status=404
+        )
+
+    league = payload.get("league") or {}
+    standings = (payload.get("standings") or {}).get("results") or []
+    around = leagues_mod.rivals_around(standings, entry_id)
+
+    state = fpl_client.season_state() or {}
+    gameweek = state.get("gameweek")
+    started = bool(state.get("started"))
+
+    projection = projections_for(horizon, ml_scorer.DEFAULT_ENGINE)
+    elements = {int(e["id"]): e for e in projection.data.get("elements", [])}
+
+    squads: dict[int, list] = {}
+    my_picks: list = []
+    if started and gameweek:
+        # The entry itself plus its neighbours, deduped and capped.
+        wanted = [around["me"]] if around["me"] else []
+        wanted += list(around["above"]) + list(around["below"])
+        for row in wanted[:leagues_mod.MAX_RIVALS]:
+            rival_id = int(row.get("entry", 0))
+            if not rival_id or rival_id in squads:
+                continue
+            picks_payload = fpl_client.picks(rival_id, gameweek)
+            if picks_payload and picks_payload.get("picks"):
+                squads[rival_id] = picks_payload["picks"]
+                if rival_id == entry_id:
+                    my_picks = picks_payload["picks"]
+
+    ownership = leagues_mod.effective_ownership(squads, elements)
+    split = leagues_mod.differentials(
+        my_picks, ownership, projection.projections, elements
+    )
+
+    return {
+        "league": {
+            "id": int(league.get("id", league_id)),
+            "name": league.get("name", ""),
+            "size": len(standings),
+        },
+        "gameweek": gameweek,
+        "posture": leagues_mod.posture(around["me"], around),
+        "me": around["me"],
+        "above": around["above"],
+        "below": around["below"],
+        "rivals_analysed": len(squads),
+        "gaps": split["gaps"],
+        "edges": split["edges"],
+        # Pre-season nobody has picks, so exposure is unknowable rather than
+        # zero. Saying which it is stops an empty list reading as "no risk".
+        "squads_available": started,
+    }
 
 
 def current_picks(entry_id: int, gameweek: int) -> dict | None:
