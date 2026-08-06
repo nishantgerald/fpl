@@ -8,10 +8,13 @@ once the season starts. The optional extra is a per-user FPL session cookie
 (for pre-deadline squad reads), stored encrypted and never returned once
 stored.
 
-SQLite on purpose. One process, thousands of users, read-heavy: well within
-SQLite's envelope, and moving to Postgres later is a change to this module
-alone. Passwords are scrypt-hashed via Werkzeug; session tokens are opaque
-random values stored server-side so logout actually revokes.
+Storage is chosen by `DATABASE_URL`: Postgres when one is set, otherwise a
+SQLite file. That is not a preference but a correctness requirement — Heroku's
+filesystem is ephemeral, so a SQLite file in production is destroyed on every
+restart, taking every account with it. `engine/db.py` hides the difference, and
+the queries below are the same either way. Passwords are scrypt-hashed via
+Werkzeug; session tokens are opaque random values stored server-side so logout
+actually revokes.
 """
 
 from __future__ import annotations
@@ -20,14 +23,14 @@ import json
 import os
 import re
 import secrets
-import sqlite3
-import threading
 import time
 from pathlib import Path
 from typing import Sequence
 
 from cryptography.fernet import Fernet, InvalidToken
 from werkzeug.security import check_password_hash, generate_password_hash
+
+from . import db
 
 DB_PATH = Path(
     os.getenv("FPL_APP_DB", Path.home() / ".local" / "share" / "fpl" / "app.db")
@@ -46,7 +49,11 @@ MIN_PASSWORD_LENGTH = 8
 # Deliberately loose: its job is catching typos, not adjudicating RFC 5322.
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-_lock = threading.Lock()
+# Writer serialisation lives in `db.lock()`, which applies it on SQLite (one
+# file, one writer) and not on Postgres. Holding a process-wide mutex across a
+# Postgres query would serialise every request in a worker behind a network
+# round-trip to the database — the opposite of what a server built for
+# concurrency needs.
 
 
 class AccountError(Exception):
@@ -60,82 +67,54 @@ class AccountError(Exception):
 # ---------------------------------------------------------------- storage
 
 
-def _connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+def _connect() -> db.Connection:
+    """Postgres when DATABASE_URL is set, else the SQLite file at DB_PATH.
+
+    DB_PATH is still consulted so the tests, which point it at a tmp_path, keep
+    working unchanged.
+    """
+    return db.connect(sqlite_path=DB_PATH)
 
 
 def init_db() -> None:
-    with _lock, _connect() as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY,
-                email TEXT NOT NULL UNIQUE,
-                -- Empty string means "no password set" (a Google-only account).
-                -- NULL would say the same thing more idiomatically, but the
-                -- column predates Google sign-in and SQLite cannot drop a NOT
-                -- NULL without rebuilding the table.
-                password_hash TEXT NOT NULL,
-                google_sub TEXT,
-                created_at REAL NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS sessions (
-                token TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                created_at REAL NOT NULL,
-                expires_at REAL NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS fpl_links (
-                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-                entry_id INTEGER NOT NULL,
-                team_name TEXT,
-                manager_name TEXT,
-                linked_at REAL NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS password_resets (
-                token_hash TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                created_at REAL NOT NULL,
-                expires_at REAL NOT NULL,
-                used_at REAL
-            );
-            CREATE TABLE IF NOT EXISTS fpl_cookies (
-                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-                ciphertext BLOB NOT NULL,
-                updated_at REAL NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS saved_squads (
-                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-                element_ids TEXT NOT NULL,
-                bench_ids TEXT NOT NULL,
-                source TEXT NOT NULL,
-                updated_at REAL NOT NULL
-            );
-            """
-        )
-        # Databases created before Google sign-in lack the column; CREATE IF
-        # NOT EXISTS won't add it to an existing table.
-        columns = [row[1] for row in conn.execute("PRAGMA table_info(users)")]
+    """Create the schema, and upgrade a database that predates a column.
+
+    The migration is expressed against `information_schema` rather than
+    SQLite's `PRAGMA table_info`, because it has to run on both backends: a
+    long-lived Postgres database is exactly the thing that will still be here
+    when the next column is added.
+    """
+    with db.lock(), _connect() as conn:
+        db.init_schema(conn)
+
+        columns = _existing_columns(conn, "users")
+        # Databases created before Google sign-in lack the column; CREATE TABLE
+        # IF NOT EXISTS won't add it to an existing table.
         if "google_sub" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN google_sub TEXT")
         # On by default for new accounts: the briefing is the reason to have an
         # account at all, and burying it behind a toggle nobody finds means the
         # feature may as well not exist. Every message carries the way out, and
-        # one switch on this screen turns it off for good.
+        # one switch on the account screen turns it off for good.
         if "deadline_email" not in columns:
             conn.execute(
                 "ALTER TABLE users ADD COLUMN deadline_email INTEGER NOT NULL DEFAULT 1"
             )
-        # SQLite unique indexes permit any number of NULLs, so password-only
-        # accounts coexist fine.
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub"
-            " ON users (google_sub)"
-        )
+
+        # Last: an index names a column, so it cannot be created before the
+        # migration that adds one.
+        db.init_indexes(conn)
+
+
+def _existing_columns(conn: db.Connection, table: str) -> set[str]:
+    if conn.postgres:
+        rows = conn.execute(
+            "SELECT column_name FROM information_schema.columns"
+            " WHERE table_name = ?",
+            (table,),
+        ).fetchall()
+        return {row["column_name"] for row in rows}
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
 
 
 def _fernet() -> Fernet:
@@ -162,7 +141,7 @@ def register(email: str, password: str) -> dict:
             f"Password must be at least {MIN_PASSWORD_LENGTH} characters.",
         )
 
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         existing = conn.execute(
             "SELECT password_hash, google_sub FROM users WHERE email = ?", (email,)
         ).fetchone()
@@ -192,7 +171,7 @@ def register(email: str, password: str) -> dict:
 def _mint_session(user_id: int) -> str:
     token = secrets.token_urlsafe(32)
     now = time.time()
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         conn.execute(
             "INSERT INTO sessions (token, user_id, created_at, expires_at)"
             " VALUES (?, ?, ?, ?)",
@@ -204,7 +183,7 @@ def _mint_session(user_id: int) -> str:
 def authenticate(email: str, password: str) -> str:
     """Verify credentials and mint a session token."""
     email = (email or "").strip().lower()
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         row = conn.execute(
             "SELECT id, password_hash FROM users WHERE email = ?", (email,)
         ).fetchone()
@@ -237,7 +216,7 @@ def login_google(sub: str, email: str) -> str:
         raise AccountError("bad_google_identity", "Google returned an unusable identity.")
 
     created = False
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         row = conn.execute(
             "SELECT id FROM users WHERE google_sub = ?", (sub,)
         ).fetchone()
@@ -277,7 +256,7 @@ def set_password(user_id: int, password: str) -> None:
             "weak_password",
             f"Password must be at least {MIN_PASSWORD_LENGTH} characters.",
         )
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         conn.execute(
             "UPDATE users SET password_hash = ? WHERE id = ?",
             (generate_password_hash(password), user_id),
@@ -286,7 +265,7 @@ def set_password(user_id: int, password: str) -> None:
 
 def login_methods(user_id: int) -> dict:
     """Which ways this account can sign in. Booleans only — no secrets."""
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         row = conn.execute(
             "SELECT password_hash, google_sub FROM users WHERE id = ?", (user_id,)
         ).fetchone()
@@ -299,7 +278,7 @@ def user_for_token(token: str | None) -> dict | None:
     """The user a bearer token belongs to, or None. Expired tokens are reaped."""
     if not token:
         return None
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         row = conn.execute(
             """
             SELECT u.id, u.email, s.expires_at
@@ -319,7 +298,7 @@ def user_for_token(token: str | None) -> dict | None:
 def logout(token: str | None) -> None:
     if not token:
         return
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
 
 
@@ -327,7 +306,7 @@ def logout(token: str | None) -> None:
 
 
 def link_fpl(user_id: int, entry_id: int, team_name: str, manager_name: str) -> dict:
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         conn.execute(
             """
             INSERT INTO fpl_links (user_id, entry_id, team_name, manager_name, linked_at)
@@ -344,7 +323,7 @@ def link_fpl(user_id: int, entry_id: int, team_name: str, manager_name: str) -> 
 
 
 def fpl_link(user_id: int) -> dict | None:
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         row = conn.execute(
             "SELECT entry_id, team_name, manager_name FROM fpl_links WHERE user_id = ?",
             (user_id,),
@@ -359,7 +338,7 @@ def store_cookie(user_id: int, cookie: str) -> None:
     """Encrypt and store a user's FPL session cookie. Write-only from outside:
     nothing in the API surface ever returns it, only whether one exists."""
     ciphertext = _fernet().encrypt(cookie.encode("utf-8"))
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         conn.execute(
             """
             INSERT INTO fpl_cookies (user_id, ciphertext, updated_at)
@@ -373,7 +352,7 @@ def store_cookie(user_id: int, cookie: str) -> None:
 
 
 def cookie_for(user_id: int) -> str | None:
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         row = conn.execute(
             "SELECT ciphertext FROM fpl_cookies WHERE user_id = ?", (user_id,)
         ).fetchone()
@@ -388,7 +367,7 @@ def cookie_for(user_id: int) -> str | None:
 
 
 def delete_cookie(user_id: int) -> None:
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         conn.execute("DELETE FROM fpl_cookies WHERE user_id = ?", (user_id,))
 
 
@@ -409,7 +388,7 @@ def store_squad(
     screenshot is a perfectly good answer to that, but only if it outlives the
     request that parsed it.
     """
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         conn.execute(
             """
             INSERT INTO saved_squads (user_id, element_ids, bench_ids, source, updated_at)
@@ -431,7 +410,7 @@ def store_squad(
 
 
 def saved_squad(user_id: int) -> dict | None:
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         row = conn.execute(
             "SELECT element_ids, bench_ids, source, updated_at FROM saved_squads"
             " WHERE user_id = ?",
@@ -448,7 +427,7 @@ def saved_squad(user_id: int) -> dict | None:
 
 
 def has_cookie(user_id: int) -> bool:
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         row = conn.execute(
             "SELECT 1 FROM fpl_cookies WHERE user_id = ?", (user_id,)
         ).fetchone()
@@ -460,7 +439,7 @@ def has_cookie(user_id: int) -> bool:
 
 def set_deadline_email(user_id: int, enabled: bool) -> None:
     """Opt in or out of the pre-deadline briefing."""
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         conn.execute(
             "UPDATE users SET deadline_email = ? WHERE id = ?",
             (1 if enabled else 0, user_id),
@@ -468,7 +447,7 @@ def set_deadline_email(user_id: int, enabled: bool) -> None:
 
 
 def wants_deadline_email(user_id: int) -> bool:
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         row = conn.execute(
             "SELECT deadline_email FROM users WHERE id = ?", (user_id,)
         ).fetchone()
@@ -482,7 +461,7 @@ def digest_subscribers() -> list[dict]:
     briefed about, and sending them an empty digest teaches them to ignore the
     next one.
     """
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         rows = conn.execute(
             """
             SELECT u.id, u.email, l.entry_id, l.team_name, l.manager_name
@@ -515,7 +494,7 @@ def create_reset_token(email: str) -> tuple[str, dict] | None:
     reset links, the same reasoning that applies to passwords.
     """
     email = (email or "").strip().lower()
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         row = conn.execute(
             "SELECT id, email FROM users WHERE email = ?", (email,)
         ).fetchone()
@@ -554,7 +533,7 @@ def reset_password(token: str, password: str) -> dict:
 
     token_hash = _hash_token(token or "")
     now = time.time()
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         row = conn.execute(
             "SELECT user_id, expires_at, used_at FROM password_resets"
             " WHERE token_hash = ?",
@@ -587,7 +566,7 @@ def reset_password(token: str, password: str) -> dict:
 
 def purge_expired_resets() -> int:
     """Drop spent and expired tokens. Cheap hygiene, safe to call any time."""
-    with _lock, _connect() as conn:
+    with db.lock(), _connect() as conn:
         cursor = conn.execute(
             "DELETE FROM password_resets WHERE expires_at < ? OR used_at IS NOT NULL",
             (time.time(),),

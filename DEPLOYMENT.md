@@ -4,6 +4,36 @@ Configuration this app reads, and why each one exists. Nothing here contains a
 secret; the values live in `.env` locally (mode 600, gitignored) and in the
 host's config vars in production.
 
+## Database
+
+`DATABASE_URL` — **required in any hosted deployment.** Without it the app
+falls back to a SQLite file, and Heroku's filesystem is ephemeral: every
+restart (at least daily, plus each deploy and each `config:set`) destroys every
+user, session, FPL link, vaulted cookie and saved squad.
+
+Set up on Neon's free plan, which takes no credit card and therefore cannot
+bill you — it restricts at the limit rather than invoicing.
+
+```bash
+heroku config:set --app ng-fpl DATABASE_URL='postgresql://...?sslmode=require'
+```
+
+Two details that keep it free and working:
+
+- **Connections are opened and closed per request**, never pooled. Neon's
+  compute sleeps after five minutes idle, and every open connection resets that
+  timer — a normal pool would hold it awake around the clock, spending roughly
+  182 of the free plan's 100 compute-hours a month and suspending the project
+  about halfway through. The cost is a connection setup per request, which at
+  this traffic is the right trade.
+- **`sslmode=require` is appended** if the URL doesn't specify one, because
+  psycopg will otherwise connect in the clear where the server permits it.
+
+The schema is created and migrated on boot by `accounts.init_db()`, so there is
+no separate migration step. Moving between providers is a change to this one
+variable; `engine/db.py` speaks plain Postgres and holds nothing
+vendor-specific.
+
 ## Required in production
 
 | Variable | Why |
