@@ -98557,7 +98557,7 @@ o=n.cx
 o.toString
 B.b.I(k,A.b([A.ap(m,A.aX(A.b([p,B.aC,A.c_(A.O(o,m,m,m,A.aW(m,m,B.a6,m,m,m,m,m,m,m,m,13,m,m,m,m,m,!0,m,m,m,m,m,m,m,m),m,m),1,m)],l),B.n,B.f,B.i,0),B.l,m,m,new A.at(s,m,q,r,m,m,B.r),m,m,m,m,B.lI,m,m,m),B.b1],l))}s=A.b([$.aXu()],t.VS)
 r=n.w
-k.push(A.tZ(B.c7,!1,n.f,A.afm(m,m,m,m,m,m,m,m,!0,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,"e.g. 2670555",m,m,m,m,m,m,m,B.a0a,"FPL Manager ID",!0,!0,!1,m,B.LG,m,m,m,m,m,m,m,m,m,m,m,m),r!==B.kf,n.r,s,B.e9,1,!1,m,new A.aFR(n),B.De))
+k.push(A.tZ(B.c7,!1,n.f,A.afm(m,m,m,m,m,m,m,m,!0,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,"e.g. 1234567",m,m,m,m,m,m,m,B.a0a,"FPL Manager ID",!0,!0,!1,m,B.LG,m,m,m,m,m,m,m,m,m,m,m,m),r!==B.kf,n.r,s,B.e9,1,!1,m,new A.aFR(n),B.De))
 k.push(B.b9)
 k.push(A.aX(A.b([B.M8,B.c_,A.c_(A.O("Find it at fantasy.premierleague.com \u2192 your team URL: /entry/YOUR_ID/",m,m,m,B.dq,m,m),1,m)],l),B.n,B.f,B.i,0))
 k.push(B.cd)
