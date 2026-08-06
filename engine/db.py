@@ -192,7 +192,7 @@ class Connection:
             # silently insert a NULL user_id into every dependent row.
             return Cursor(raw, raw.lastrowid)
 
-        translated = _to_pg_placeholders(sql)
+        translated = _to_pg_placeholders(sql, has_params=bool(params))
         wants_id = _is_insert_needing_id(translated)
         if wants_id:
             translated = translated.rstrip().rstrip(";") + " RETURNING id"
@@ -251,16 +251,22 @@ _PLACEHOLDER_RE = re.compile(
 )
 
 
-def _to_pg_placeholders(sql: str) -> str:
-    """`?` → `%s`, without touching question marks inside strings or comments.
+def _to_pg_placeholders(sql: str, has_params: bool = True) -> str:
+    """`?` → `%s`, leaving question marks inside strings and comments alone.
 
-    A blunt `sql.replace("?", "%s")` corrupts any literal containing one, and
-    `%` in a literal would then be read by psycopg as a format specifier.
+    A blunt `sql.replace("?", "%s")` corrupts any literal containing one.
+
+    The second job is the inverse: a literal `%` — in a `LIKE 'prefix-%'`, say
+    — is read by psycopg as a format specifier and raises
+    "only '%s', '%b', '%t' are allowed as placeholders". It has to be doubled.
+    Only when parameters are actually passed, though: psycopg skips placeholder
+    parsing entirely for a query with no arguments, so escaping there would
+    leave a literal `%%` in the SQL.
     """
     def swap(match: re.Match) -> str:
-        if match.group(1) is None:
-            return match.group(0)
-        return "%s"
+        if match.group(1) is not None:
+            return "%s"
+        return match.group(0).replace("%", "%%") if has_params else match.group(0)
 
     return _PLACEHOLDER_RE.sub(swap, sql)
 
@@ -312,6 +318,30 @@ def connect(sqlite_path: Path | None = None) -> Connection:
     raw.row_factory = sqlite3.Row
     raw.execute("PRAGMA foreign_keys = ON")
     return Connection(raw, postgres=False)
+
+
+# One arbitrary constant, shared by every worker. Postgres advisory locks are
+# keyed on a bigint and namespaced to the database, so any value does as long
+# as it is the same one everywhere.
+_SCHEMA_LOCK_KEY = 0x66706C5F736368  # "fpl_sch"
+
+
+def schema_lock(conn: Connection) -> None:
+    """Serialise DDL across gunicorn workers.
+
+    `CREATE TABLE IF NOT EXISTS` is not atomic in Postgres: it checks, then
+    creates, without holding a lock. Every worker runs `init_db()` at import,
+    so against an empty database they race — two create `users` at the same
+    instant, one dies with "duplicate key ... pg_type_typname_nsp_index", and
+    gunicorn shuts the whole master down because a worker failed to boot.
+
+    SQLite never showed this: one file, one writer, one process.
+
+    The lock is session-scoped and released when the connection closes, which
+    the context manager always does.
+    """
+    if conn.postgres:
+        conn.execute("SELECT pg_advisory_lock(?)", (_SCHEMA_LOCK_KEY,))
 
 
 def init_schema(conn: Connection) -> None:

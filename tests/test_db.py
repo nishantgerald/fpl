@@ -5,10 +5,14 @@ several times a day and takes every account with it. This module is what lets
 `accounts.py` keep its thirty-nine queries unchanged while running on Postgres.
 
 The translation tests below need no database and are where the silent-corruption
-bugs live. The integration tests need a real Postgres and skip without one —
-run them with:
+bugs live. The integration tests need a real Postgres and skip without one:
 
-    DATABASE_URL='postgresql://...' pytest tests/test_db.py
+    TEST_DATABASE_URL='postgresql://.../fpl_test' pytest tests/test_db.py
+
+Deliberately *not* `DATABASE_URL`. These tests drop every table on teardown, so
+pointing them at the variable production also reads would destroy the live
+database — which is exactly what happened once, and why the fixture below now
+refuses to run against it.
 """
 
 import os
@@ -103,17 +107,33 @@ class TestReturningId:
 
 # ------------------------------------------------------------- integration
 
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "").strip()
+
+# Captured at import, which is the only moment it is still visible: the autouse
+# fixture in conftest deletes DATABASE_URL from the environment before any test
+# runs. Reading it inside the fixture therefore always saw an empty string, and
+# the safety check below silently passed — which is how these tests dropped the
+# production tables a second time after the guard was added.
+LIVE_DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 postgres_only = pytest.mark.skipif(
-    not DATABASE_URL.startswith(("postgres://", "postgresql://")),
-    reason="set DATABASE_URL to a Postgres instance to run these",
+    not TEST_DATABASE_URL.startswith(("postgres://", "postgresql://")),
+    reason="set TEST_DATABASE_URL to a throwaway Postgres database to run these",
 )
 
 
 @pytest.fixture
 def pg(monkeypatch):
-    """A clean schema on the real database, dropped again afterwards."""
-    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    """A clean schema on a throwaway database, dropped again afterwards.
+
+    The guard is not paranoia. These tests DROP TABLE on teardown, and pointed
+    at production they delete every account — silently, in a green test run.
+    """
+    if LIVE_DATABASE_URL and LIVE_DATABASE_URL == TEST_DATABASE_URL:
+        pytest.fail(
+            "TEST_DATABASE_URL is the same database as DATABASE_URL. These "
+            "tests drop every table; point them at a throwaway database."
+        )
+    monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
     with db.connect() as conn:
         for table in (
             "saved_squads", "fpl_cookies", "password_resets",
@@ -214,3 +234,41 @@ def test_init_db_is_safe_to_run_twice(pg):
 
     user = accounts.register("nish@example.com", "a-decent-password")
     assert user["id"] is not None
+
+
+class TestPercentEscaping:
+    """psycopg reads a bare `%` as a format specifier and refuses the query.
+
+    Not currently hit — no query in accounts.py contains one — but the first
+    `LIKE 'prefix-%'` anyone writes would fail only on Postgres, and only in
+    production.
+    """
+
+    def test_a_literal_percent_is_doubled_when_parameters_are_passed(self):
+        sql = "DELETE FROM users WHERE email LIKE 'check-%' AND id = ?"
+
+        assert (
+            db._to_pg_placeholders(sql, has_params=True)
+            == "DELETE FROM users WHERE email LIKE 'check-%%' AND id = %s"
+        )
+
+    def test_a_literal_percent_is_left_alone_without_parameters(self):
+        """psycopg skips placeholder parsing for an argument-less query, so
+        escaping there would leave a literal %% in the data."""
+        sql = "DELETE FROM users WHERE email LIKE 'check-%'"
+
+        assert db._to_pg_placeholders(sql, has_params=False) == sql
+
+
+@postgres_only
+def test_a_like_pattern_works_against_the_real_server(pg):
+    accounts.register("keep-me@example.com", "a-decent-password")
+    accounts.register("drop-me@example.com", "a-decent-password")
+
+    with db.connect() as conn:
+        conn.execute(
+            "DELETE FROM users WHERE email LIKE 'drop-%' AND id > ?", (0,)
+        )
+        remaining = conn.execute("SELECT email FROM users").fetchall()
+
+    assert [row["email"] for row in remaining] == ["keep-me@example.com"]

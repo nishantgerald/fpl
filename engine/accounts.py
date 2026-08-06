@@ -85,6 +85,11 @@ def init_db() -> None:
     when the next column is added.
     """
     with db.lock(), _connect() as conn:
+        # Before any DDL. Every gunicorn worker runs this on import, and
+        # CREATE TABLE IF NOT EXISTS is not atomic on Postgres — against an
+        # empty database the workers race, one dies, and gunicorn shuts the
+        # master down because a worker failed to boot.
+        db.schema_lock(conn)
         db.init_schema(conn)
 
         columns = _existing_columns(conn, "users")
