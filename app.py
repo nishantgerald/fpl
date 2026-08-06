@@ -1633,6 +1633,53 @@ def fcps_recommendations():
     return jsonify(service.fcps_advice(entry_id=user_id, refresh=refresh))
 
 
+def _decorate_draft_with_pitch(result):
+    """Attach full player payloads grouped by position.
+
+    The suggestion was four labelled lists; a squad is a shape. Reusing the
+    same payload the pitch already understands means one player model, one
+    stats sheet, and no second rendering path to keep in step.
+    """
+    starters = result.get("starting_xi") or []
+    bench = result.get("bench") or []
+    if not starters:
+        return result
+
+    projection_set = service.projections_for(
+        service.DEFAULT_HORIZON, ml_scorer.DEFAULT_ENGINE
+    )
+    elements = {int(e["id"]): e for e in projection_set.data.get("elements", [])}
+    teams = {
+        int(t["id"]): t.get("short_name", "UNK")
+        for t in projection_set.data.get("teams", [])
+    }
+    fcps_scores, _ = service.fcps_for()
+
+    def _full(row, starting):
+        element = elements.get(int(row.get("id", 0)))
+        if element is None:
+            return None
+        payload = _player_payload(
+            element,
+            teams.get(int(element.get("team", 0)), "UNK"),
+            projection_set.projections.get(int(row["id"]), {}),
+            fcps_scores.get(int(row["id"])),
+        )
+        payload["starting_eleven"] = starting
+        payload["is_captain"] = bool(row.get("is_captain"))
+        payload["is_vice_captain"] = bool(row.get("is_vice_captain"))
+        return payload
+
+    lineup = {"GKP": [], "DEF": [], "MID": [], "FWD": []}
+    for row in starters:
+        full = _full(row, True)
+        if full and full["position"] in lineup:
+            lineup[full["position"]].append(full)
+    result["lineup"] = lineup
+    result["bench_players"] = [p for p in (_full(r, False) for r in bench) if p]
+    return result
+
+
 @app.route("/api/draft-squad")
 def draft_squad():
     """A recommended opening fifteen, for the window before the GW1 deadline.
@@ -1659,10 +1706,14 @@ def draft_squad():
             return jsonify({"code": "draft_throttled", "error": str(error)}), 429
 
     return jsonify(
-        service.draft_squad(
-            horizon=_int_arg("horizon", service.DEFAULT_HORIZON, 1, service.MAX_HORIZON),
-            engine=_engine_arg(),
-            pinned=pinned,
+        _decorate_draft_with_pitch(
+            service.draft_squad(
+                horizon=_int_arg(
+                    "horizon", service.DEFAULT_HORIZON, 1, service.MAX_HORIZON
+                ),
+                engine=_engine_arg(),
+                pinned=pinned,
+            )
         )
     )
 
