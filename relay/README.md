@@ -59,9 +59,23 @@ config:
 cloudflared tunnel --url http://127.0.0.1:8765
 ```
 
-The quick tunnel above prints a random `*.trycloudflare.com` hostname that
-changes on every restart. For something that survives a reboot, create a named
-tunnel against a Cloudflare account and point it at `127.0.0.1:8765`.
+The quick tunnel above prints a random `*.trycloudflare.com` hostname, and it
+**changes on every restart** — so a URL set once by hand goes stale on the next
+reboot and the model features switch off with no error anywhere. `publish-url.sh`
+closes that: it reads the current hostname and PATCHes it straight to the Heroku
+Platform API (no Heroku CLI needed), and the tunnel unit runs it on every start.
+
+Give it a token once, in `~/.config/fpl-relay/heroku.env`:
+
+```
+HEROKU_API_KEY=<dashboard.heroku.com/account → Reveal API Key>
+HEROKU_APP=ng-fpl
+```
+
+Without that file it just prints the URL and the command to run by hand, so it
+never fails silently. For a hostname that never moves at all, a named tunnel
+against a free Cloudflare account works too — but it needs a domain on
+Cloudflare DNS, and this one is on Squarespace.
 
 **4. Point production at it:**
 
