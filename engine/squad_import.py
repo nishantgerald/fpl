@@ -208,6 +208,48 @@ def resolve_names(
     return matched, unresolved
 
 
+def best_eleven(rows: Sequence[Mapping]) -> tuple[list[dict], list[dict]]:
+    """Split a read squad into a legal starting eleven and a bench.
+
+    A screenshot arrives as a list of names in reading order, which says
+    nothing about who a manager actually starts. Rather than guess from
+    position on the page, this picks the highest-projecting legal shape — the
+    same question the squad builder answers, so the two never disagree about
+    what a squad is worth.
+
+    Degrades on a partial read: with fewer than eleven, everyone starts.
+    """
+    quotas = {"GKP": (1, 1), "DEF": (3, 5), "MID": (2, 5), "FWD": (1, 3)}
+    by_position: dict[str, list[dict]] = {p: [] for p in quotas}
+    for row in rows:
+        by_position.setdefault(row.get("position", ""), []).append(dict(row))
+    for group in by_position.values():
+        group.sort(key=lambda r: -float(r.get("xpts") or 0.0))
+
+    best, best_total = None, -1.0
+    for defenders in range(quotas["DEF"][0], quotas["DEF"][1] + 1):
+        for midfielders in range(quotas["MID"][0], quotas["MID"][1] + 1):
+            forwards = 10 - defenders - midfielders
+            if not (quotas["FWD"][0] <= forwards <= quotas["FWD"][1]):
+                continue
+            counts = {"GKP": 1, "DEF": defenders, "MID": midfielders, "FWD": forwards}
+            if any(len(by_position.get(p, [])) < c for p, c in counts.items()):
+                continue
+            eleven = [q for p, c in counts.items() for q in by_position[p][:c]]
+            total = sum(float(q.get("xpts") or 0.0) for q in eleven)
+            if total > best_total:
+                best_total, best = total, eleven
+
+    if best is None:
+        # Not enough for a legal eleven — show what was read rather than
+        # refusing to draw anything.
+        return [dict(r) for r in rows], []
+
+    chosen = {q["id"] for q in best}
+    bench = [dict(r) for r in rows if r["id"] not in chosen]
+    return best, bench
+
+
 def rate(
     matched: Sequence[Mapping],
     projections: Mapping[int, Mapping],

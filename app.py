@@ -1358,6 +1358,43 @@ def import_screenshot():
         return jsonify({"code": "bad_image", "error": "No image was uploaded."}), 400
 
     result = service.import_screenshot(payload, mime)
+
+    # Return full player payloads so the client can draw the squad on a pitch
+    # and open the same stats sheet it uses everywhere else. A thinner shape
+    # would force a second, parallel player model on the client.
+    projection_set = service.projections_for(
+        service.DEFAULT_HORIZON, ml_scorer.DEFAULT_ENGINE
+    )
+    elements = {int(e["id"]): e for e in projection_set.data.get("elements", [])}
+    teams = {
+        int(t["id"]): t.get("short_name", "UNK")
+        for t in projection_set.data.get("teams", [])
+    }
+    fcps_scores, _ = service.fcps_for()
+
+    def _full(row):
+        element = elements.get(int(row["id"]))
+        if element is None:
+            return None
+        payload = _player_payload(
+            element,
+            teams.get(int(element.get("team", 0)), "UNK"),
+            projection_set.projections.get(int(row["id"]), {}),
+            fcps_scores.get(int(row["id"])),
+        )
+        payload["starting_eleven"] = bool(row.get("starting_eleven"))
+        return payload
+
+    starters, bench = squad_import.best_eleven(result["players"])
+    for row in starters:
+        row["starting_eleven"] = True
+    lineup = {"GKP": [], "DEF": [], "MID": [], "FWD": []}
+    for row in starters:
+        full = _full(row)
+        if full and full["position"] in lineup:
+            lineup[full["position"]].append(full)
+    result["lineup"] = lineup
+    result["bench"] = [p for p in (_full(r) for r in bench) if p]
     result["meta"] = fpl_client.meta()
     return jsonify(result)
 

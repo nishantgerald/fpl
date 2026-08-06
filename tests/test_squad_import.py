@@ -177,3 +177,45 @@ def test_the_weakest_links_are_named():
     )
 
     assert rating["weakest"][0]["web_name"] == "Gabriel"
+
+
+# ---------------------------------------------------------------- lineup
+
+
+def _row(pid, position, xpts):
+    return {"id": pid, "web_name": f"P{pid}", "position": position, "xpts": xpts}
+
+
+def test_the_eleven_is_the_best_legal_shape_not_reading_order():
+    """A screenshot is a list of names top to bottom, which says nothing about
+    who the manager starts."""
+    squad = (
+        [_row(1, "GKP", 4.0), _row(2, "GKP", 1.0)]
+        + [_row(10 + i, "DEF", 10 - i) for i in range(5)]
+        + [_row(20 + i, "MID", 20 - i) for i in range(5)]
+        + [_row(30 + i, "FWD", 30 - i) for i in range(3)]
+    )
+
+    starters, bench = squad_import.best_eleven(squad)
+
+    assert len(starters) == 11
+    assert len(bench) == 4
+    # Exactly one keeper starts, and it is the better one.
+    keepers = [s for s in starters if s["position"] == "GKP"]
+    assert len(keepers) == 1 and keepers[0]["id"] == 1
+    # The shape is legal.
+    counts = {p: len([s for s in starters if s["position"] == p]) for p in
+              ("GKP", "DEF", "MID", "FWD")}
+    assert 3 <= counts["DEF"] <= 5 and 2 <= counts["MID"] <= 5
+    assert 1 <= counts["FWD"] <= 3
+
+
+def test_a_partial_read_shows_everyone_rather_than_refusing_to_draw():
+    """Nine players cannot make a legal eleven, but the user still gets a
+    picture of what was read."""
+    squad = [_row(1, "GKP", 4.0)] + [_row(10 + i, "MID", 5.0) for i in range(3)]
+
+    starters, bench = squad_import.best_eleven(squad)
+
+    assert len(starters) == 4
+    assert bench == []
