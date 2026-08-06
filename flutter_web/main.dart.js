@@ -98492,10 +98492,8 @@ n.toString
 r.push(p.aaO(n))}else r.push(p.aaU())
 if(p.ax)B.b.I(r,A.b([B.b2,A.ko(B.a2A,p.gQw(),o)],q))
 if(!p.ax&&p.w!==B.ej&&p.d.b==null)B.b.I(r,A.b([B.b1,A.ko(B.a2x,new A.aFP(p),o)],q))
-if(!p.ax&&p.w!==B.ej){n=A.b([B.bh,A.aW(A.b([A.c_(A.OZ(B.bL,o),1,o),new A.aP(B.ij,A.O("or",o,o,o,A.aX(o,o,B.p,o,o,o,o,o,o,o,o,12,o,o,o,o,o,!0,o,o,o,o,o,o,o,o),o,o),o),A.c_(A.OZ(B.bL,o),1,o)],q),B.n,B.f,B.i,0),B.a_],q)
-if(p.at)n.push(A.Ei(B.LJ,B.Kx,new A.aFQ(p),A.Ek(o,o,o,o,o,o,o,o,o,o,o,o,B.fG,o,o,o,o,o,o,o)))
-if(p.at)B.b.I(n,A.b([B.bE,A.O("Don't know your Team ID? Upload a screenshot instead \u2014 no account needed.",o,o,o,A.aX(o,o,B.p,o,o,o,o,o,o,o,o,11.5,o,o,o,o,o,!0,o,o,o,o,o,o,o,o),B.ap,o)],q))
-B.b.I(r,n)}return A.d3(A.ln(new A.dH(B.hK,A.aC(r,B.n,B.f,B.ae),o),B.JX,B.R),o,o)},
+if(p.at&&!p.ax&&p.w!==B.ej)B.b.I(r,A.b([B.bh,A.aW(A.b([A.c_(A.OZ(B.bL,o),1,o),new A.aP(B.ij,A.O("or",o,o,o,A.aX(o,o,B.p,o,o,o,o,o,o,o,o,12,o,o,o,o,o,!0,o,o,o,o,o,o,o,o),o,o),o),A.c_(A.OZ(B.bL,o),1,o)],q),B.n,B.f,B.i,0),B.a_,A.Ei(B.LJ,B.Kx,new A.aFQ(p),A.Ek(o,o,o,o,o,o,o,o,o,o,o,o,B.fG,o,o,o,o,o,o,o)),B.bE,A.O("Don't know your Team ID? Upload a screenshot instead \u2014 no account needed.",o,o,o,A.aX(o,o,B.p,o,o,o,o,o,o,o,o,11.5,o,o,o,o,o,!0,o,o,o,o,o,o,o,o),B.ap,o)],q))
+return A.d3(A.ln(new A.dH(B.hK,A.aC(r,B.n,B.f,B.ae),o),B.JX,B.R),o,o)},
 aaU(){var s,r,q,p,o,n=this,m=null,l=t.p,k=A.b([],l)
 if(n.cx!=null){s=B.a6.aF(0.1)
 r=A.aQ(10)
