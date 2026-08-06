@@ -39,7 +39,7 @@ import tempfile
 import time
 from typing import Mapping, Sequence
 
-from . import fcps_llm, llm_budget
+from . import claude_cli, fcps_llm, llm_budget
 
 # Narration is two sentences about a decided plan; there is nothing to reason
 # about, so the cheapest effort is the right one.
@@ -133,11 +133,9 @@ def _narrate(plan: Mapping) -> str | None:
         with llm_budget.reserve("narrative"), tempfile.TemporaryDirectory(
             prefix="narrative-"
         ) as scratch:
-            completed = subprocess.run(
+            completed = claude_cli.run(
                 command,
                 input=prompt,
-                capture_output=True,
-                text=True,
                 timeout=TIMEOUT_SECONDS,
                 cwd=scratch,
             )

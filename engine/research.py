@@ -46,7 +46,7 @@ import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 
-from . import fcps_llm, llm_budget
+from . import claude_cli, fcps_llm, llm_budget
 
 # Refreshed daily. Team news moves on the day of a deadline, but a digest that
 # is a few hours stale is far better than none, and a tighter TTL buys little
@@ -279,11 +279,9 @@ def refresh() -> dict:
         with llm_budget.reserve("research"), tempfile.TemporaryDirectory(
             prefix="research-"
         ) as scratch:
-            completed = subprocess.run(
+            completed = claude_cli.run(
                 command,
                 input=_distil_prompt(documents),
-                capture_output=True,
-                text=True,
                 timeout=DISTIL_TIMEOUT_SECONDS,
                 cwd=scratch,
             )

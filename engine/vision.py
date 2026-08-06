@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from . import claude_cli
 from . import llm_budget
 
 TIMEOUT_SECONDS = int(os.getenv("VISION_TIMEOUT_SECONDS", 120))
@@ -43,14 +44,25 @@ class VisionUnavailable(Exception):
 
 
 def _binary() -> str | None:
-    override = os.getenv("FCPS_CLAUDE_BIN", "").strip()
-    if override:
-        return override if Path(override).exists() else None
-    return shutil.which("claude")
+    """The CLI this call will use as argv[0].
+
+    Falls back to the bare name when only the relay is available: the relay
+    substitutes its own binary and ignores this, but the argv still has to be
+    well-formed on the way out.
+    """
+    if claude_cli.local_binary() is not None:
+        return claude_cli.local_binary()
+    return "claude" if claude_cli.relay_configured() else None
 
 
 def is_configured() -> bool:
-    return _binary() is not None
+    """Whether a model is reachable — locally, or over the relay.
+
+    This is what `/api/import/config` reports, and therefore what decides
+    whether the upload button is shown at all. Before the relay it was false on
+    every dyno, which is why the feature was dead in production.
+    """
+    return claude_cli.is_available()
 
 
 def model_name() -> str:
@@ -78,7 +90,7 @@ def read_image(image: bytes, prompt: str, suffix: str = ".png") -> str:
             image_path = Path(scratch) / f"squad{suffix}"
             image_path.write_bytes(image)
 
-            completed = subprocess.run(
+            completed = claude_cli.run(
                 [
                     binary,
                     "-p",
@@ -92,10 +104,11 @@ def read_image(image: bytes, prompt: str, suffix: str = ".png") -> str:
                     scratch,
                 ],
                 input=f"{prompt}\n\nThe image is at: {image_path}\n",
-                capture_output=True,
-                text=True,
                 timeout=TIMEOUT_SECONDS,
                 cwd=scratch,
+                # The relay runs on another machine, so the bytes have to travel
+                # with the request — a path means nothing at the far end.
+                attachments={image_path.name: image},
             )
     except llm_budget.BudgetExhausted as error:
         raise VisionUnavailable("vision_budget_exhausted", str(error), 429) from error

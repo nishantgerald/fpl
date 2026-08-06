@@ -17,14 +17,18 @@ expected minutes, availability and fixture difficulty.</p>
     <th class="num">Total</th>
   </tr></thead>
   <tbody>
+  {% set leader = group.players[0].horizon_xpts if group.players else 1 %}
   {% for p in group.players %}
-    <tr>
+    <tr{% if loop.index <= 3 %} class="lead"{% endif %}>
       <td class="rank">{{ loop.index }}</td>
-      <td><a href="/players/{{ p.slug }}">{{ p.web_name }}</a></td>
+      <td><span class="pos p{{ p.position }}">{{ p.position }}</span><a href="/players/{{ p.slug }}">{{ p.web_name }}</a></td>
       <td>{{ p.team }}</td>
       <td class="num">£{{ '%.1f'|format(p.price) }}m</td>
       {% for v in p.per_gameweek %}<td class="num">{{ '%.1f'|format(v) }}</td>{% endfor %}
-      <td class="num"><strong>{{ '%.1f'|format(p.horizon_xpts) }}</strong></td>
+      <td class="num total">
+        <span class="v">{{ '%.1f'|format(p.horizon_xpts) }}</span>
+        <span class="bar" style="width:{{ (100 * p.horizon_xpts / leader) if leader else 0 }}%"></span>
+      </td>
     </tr>
   {% endfor %}
   </tbody>

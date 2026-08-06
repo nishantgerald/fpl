@@ -39,7 +39,7 @@ import time
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from . import llm_budget, rules
+from . import claude_cli, llm_budget, rules
 
 # The model is reached through the Claude Code CLI rather than an HTTP API, so
 # the server needs no API key — the CLI authenticates with the operator's own
@@ -109,10 +109,10 @@ def cli_path() -> str | None:
     ``FCPS_CLAUDE_BIN`` overrides the lookup, because the web process may run
     under a PATH that doesn't include the operator's ``~/.local/bin``.
     """
-    override = os.getenv("FCPS_CLAUDE_BIN", "").strip()
-    if override:
-        return override if os.path.isfile(override) else None
-    return shutil.which("claude")
+    if claude_cli.local_binary() is not None:
+        return claude_cli.local_binary()
+    # Only the relay is available: argv[0] is a placeholder the relay replaces.
+    return "claude" if claude_cli.relay_configured() else None
 
 
 def is_configured() -> bool:
@@ -419,11 +419,9 @@ def call_model(prompt: str) -> str:
         with llm_budget.reserve("fcps"), tempfile.TemporaryDirectory(
             prefix="fcps-"
         ) as scratch:
-            completed = subprocess.run(
+            completed = claude_cli.run(
                 command,
                 input=prompt,
-                capture_output=True,
-                text=True,
                 timeout=TIMEOUT_SECONDS,
                 cwd=scratch,
             )

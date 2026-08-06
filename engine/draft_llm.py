@@ -23,7 +23,7 @@ import tempfile
 import time
 from typing import Mapping
 
-from . import fcps_llm, llm_budget
+from . import claude_cli, fcps_llm, llm_budget
 
 TIMEOUT_SECONDS = 240
 EFFORT = os.getenv("DRAFT_EFFORT", "medium")
@@ -85,11 +85,9 @@ def summarise(built: Mapping, digest: str | None = None) -> dict:
         with llm_budget.reserve("draft"), tempfile.TemporaryDirectory(
             prefix="draft-"
         ) as scratch:
-            completed = subprocess.run(
+            completed = claude_cli.run(
                 command,
                 input=_prompt(built, digest),
-                capture_output=True,
-                text=True,
                 timeout=TIMEOUT_SECONDS,
                 cwd=scratch,
             )

@@ -110,9 +110,20 @@ def test_rotation_risk_is_stated_rather_than_buried():
 
 # ---------------------------------------------------------------- pages
 
+# "/" is not here: it redirects into the app now. These are the server-rendered
+# pages that search traffic lands on, and they are still the reason anyone
+# finds the app.
+_INDEXABLE_PAGES = (
+    "/expected-points",
+    "/projections",
+    "/players",
+    "/captain",
+    "/fixtures",
+)
+
 
 def test_every_public_page_renders(client):
-    for path in ("/", "/projections", "/players", "/captain", "/fixtures"):
+    for path in _INDEXABLE_PAGES:
         response = client.get(path)
         assert response.status_code == 200, path
         assert len(_text(response.get_data(as_text=True))) > 400, path
@@ -148,7 +159,7 @@ def test_an_unknown_player_is_a_404_not_a_blank_page(client):
 
 
 def test_every_page_declares_a_canonical_url_and_a_description(client):
-    for path in ("/", "/projections", "/captain", "/fixtures", "/players"):
+    for path in _INDEXABLE_PAGES:
         html = client.get(path).get_data(as_text=True)
         assert 'rel="canonical"' in html, path
         assert 'name="description"' in html, path
@@ -160,10 +171,10 @@ def test_every_page_declares_a_canonical_url_and_a_description(client):
 
 def test_titles_are_distinct_so_pages_do_not_compete_with_each_other(client):
     titles = set()
-    for path in ("/", "/projections", "/captain", "/fixtures", "/players"):
+    for path in _INDEXABLE_PAGES:
         html = client.get(path).get_data(as_text=True)
         titles.add(re.search(r"<title>(.*?)</title>", html, re.S).group(1))
-    assert len(titles) == 5
+    assert len(titles) == len(_INDEXABLE_PAGES)
 
 
 # ---------------------------------------------------------------- discovery
@@ -190,3 +201,32 @@ def test_the_sitemap_lists_the_tools_and_the_player_pages(client):
 def test_the_app_is_still_served_and_is_not_indexed(client):
     """The SPA keeps working; it is simply not the thing crawlers read."""
     assert client.get("/app/").status_code == 200
+
+
+# ------------------------------------------------- the app is the front door
+
+
+def test_the_domain_opens_the_app_rather_than_a_page_about_it(client):
+    """Someone typing the address wants their squad, not a link to it."""
+    response = client.get("/")
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/app/"
+
+
+def test_the_landing_content_survives_the_redirect(client):
+    """Redirecting "/" must not delete what ranked there — that traffic is how
+    anyone finds the app in the first place."""
+    body = _text(client.get("/expected-points").get_data(as_text=True))
+
+    assert len(body) > 400
+    assert "expected points" in body.lower()
+
+
+def test_the_sitemap_lists_the_content_not_the_redirect(client):
+    """Listing a redirect as canonical invites a crawler to index its
+    destination instead."""
+    body = client.get("/sitemap.xml").get_data(as_text=True)
+
+    assert "/expected-points" in body
+    assert "<loc>http://localhost/</loc>" not in body

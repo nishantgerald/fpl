@@ -357,11 +357,32 @@ def _ranked_rows(ctx, position=None, limit=None):
 
 @app.route("/")
 def home():
+    """The domain is the app now, not a page about the app.
+
+    Someone typing the address wants their squad, and making them find a link
+    first was a step that answered no question. The server-rendered pages stay
+    exactly where they are — they are what search traffic arrives on, and they
+    are still linked from the app's Analytics section — but they are no longer
+    the front door.
+
+    A 302 rather than a 301: this is a product decision, and a permanent
+    redirect would be cached in browsers that can't be told to forget it.
+    """
+    return redirect("/app/", code=302)
+
+
+@app.route("/expected-points")
+def expected_points_page():
+    """The former landing page, kept indexable at its own URL.
+
+    Redirecting `/` would otherwise have deleted this content outright — it
+    ranks, and the traffic it brings is the reason anyone finds the app at all.
+    """
     ctx = _page_context()
     state = fpl_client.season_state() or {}
     return render_template(
         "landing.html",
-        canonical=_canonical("/"),
+        canonical=_canonical("/expected-points"),
         season=SEASON_LABEL,
         horizon=PAGE_HORIZON,
         gameweek=state.get("gameweek"),
@@ -527,7 +548,11 @@ def robots():
 def sitemap():
     """Every indexable URL. Player pages are capped: 700 near-identical pages
     would compete with each other for the same queries rather than rank."""
-    urls = [("/", "daily", "1.0"), ("/projections", "hourly", "0.9"),
+    # "/" is deliberately absent: it redirects to the app, and listing a
+    # redirect as canonical invites a crawler to index the destination instead.
+    # The content that used to live there is at /expected-points.
+    urls = [("/expected-points", "daily", "1.0"),
+            ("/projections", "hourly", "0.9"),
             ("/captain", "hourly", "0.9"), ("/fixtures", "daily", "0.8"),
             ("/players", "daily", "0.8")]
     ctx = _page_context()

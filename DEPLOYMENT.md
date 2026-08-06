@@ -63,7 +63,8 @@ Then set `SMTP_FROM=noreply@nishantgerald.com`.
 
 | Variable | Effect |
 |---|---|
-| `VISION_MODEL`, `VISION_TIMEOUT_SECONDS` | Screenshot import. Needs the Claude CLI on the host; absent, the feature reports unavailable and the client hides it. |
+| `VISION_MODEL`, `VISION_TIMEOUT_SECONDS` | Screenshot import. Needs a reachable Claude CLI — locally, or through the relay below; absent, the feature reports unavailable and the client hides it. |
+| `LLM_RELAY_URL`, `LLM_RELAY_PRIVATE_KEY` | Route model calls to a machine that has the Claude CLI. Without these, every model-backed feature is off on a dyno, because no dyno has the binary. See `relay/README.md`. |
 | `RESET_LINK_TO_LOG=true` | Prints reset links to the server log when mail cannot be sent. Development only — it puts account-recovery links in the log. |
 | `IMPORT_ATTEMPTS_PER_WINDOW`, `AUTH_ATTEMPTS_PER_WINDOW` | Throttles. Defaults are 5 and 10 per 15 minutes. |
 | `SEASON_LABEL` | Shown in page titles, e.g. `2026/27`. |
