@@ -1396,6 +1396,20 @@ def import_screenshot():
             lineup[full["position"]].append(full)
     result["lineup"] = lineup
     result["bench"] = [p for p in (_full(r) for r in bench) if p]
+
+    # Signed in, the parse is worth keeping: it is the only view of this user's
+    # squad before the first deadline makes picks public, and it is what the
+    # actions engine advises against. The route stays open to anonymous
+    # visitors — there is simply nowhere to file their squad.
+    user = _current_user()
+    if user is not None:
+        accounts.store_squad(
+            user["id"],
+            [int(r["id"]) for r in result["players"]],
+            [int(r["id"]) for r in bench],
+        )
+        result["saved"] = True
+
     result["meta"] = fpl_client.meta()
     return jsonify(result)
 
@@ -1465,6 +1479,10 @@ def me_actions():
     result = service.actions_for(
         link["entry_id"],
         horizon=_int_arg("horizon", service.DEFAULT_HORIZON, 1, service.MAX_HORIZON),
+        # Before the first deadline this is the only way to see their squad,
+        # and a pre-deadline squad is the one still worth advising on.
+        cookie=accounts.cookie_for(user["id"]),
+        saved_squad=accounts.saved_squad(user["id"]),
     )
     result["meta"] = fpl_client.meta()
     return jsonify(result)

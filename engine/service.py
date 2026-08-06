@@ -55,7 +55,68 @@ class ServiceError(Exception):
 # ---------------------------------------------------------------- squad state
 
 
-def actions_for(entry_id: int, horizon: int = DEFAULT_HORIZON) -> dict:
+def _squad_for_advice(
+    entry_id: int,
+    gameweek: int,
+    started: bool,
+    cookie: str | None,
+    saved: Mapping | None = None,
+) -> tuple[list[Mapping], list[Mapping], str | None]:
+    """The fifteen this manager owns right now, by whichever route can see them.
+
+    Before the first deadline nothing is public, which is exactly when advice
+    is worth most — a drafted squad is still fully changeable. The vaulted
+    session cookie can read it, so it is tried first in both halves of the
+    problem: pre-season it is the only route, and in-season it sees the live
+    draft rather than the squad frozen at the last deadline.
+
+    Returns ``(elements, picks, unavailable_reason)``. The reason is what the
+    UI shows instead of pretending an empty list means "nothing to do".
+    """
+    bootstrap = fpl_client.bootstrap() or {}
+    elements = {int(p["id"]): p for p in bootstrap.get("elements", [])}
+
+    payload = None
+    if cookie:
+        try:
+            payload = fpl_client.my_team(entry_id, cookie=cookie)
+        except fpl_client.NotAuthenticated:
+            # An expired cookie is not a dead end in-season; it is one before
+            # kickoff, and saying so is more use than a silent empty list.
+            payload = None
+
+    if payload is None and started:
+        try:
+            payload = load_squad_state(entry_id, gameweek)
+            return list(payload.get("squad") or []), list(payload.get("picks") or []), None
+        except ServiceError:
+            return [], [], "entry_not_found"
+
+    if payload is None:
+        # Last resort, and pre-season the usual one: a squad the user told us
+        # about by uploading a screenshot. Less authoritative than FPL's own
+        # answer, so it is only reached once the live routes have failed.
+        if saved and saved.get("element_ids"):
+            bench = {int(i) for i in saved.get("bench_ids") or []}
+            squad = [elements[int(i)] for i in saved["element_ids"] if int(i) in elements]
+            picks = [
+                {"element": int(e["id"]), "multiplier": 0 if int(e["id"]) in bench else 1}
+                for e in squad
+            ]
+            return squad, picks, None
+        return [], [], "no_cookie" if not started else "entry_not_found"
+
+    picks = list(payload.get("picks") or [])
+    squad = [elements[int(p["element"])] for p in picks if int(p["element"]) in elements]
+    return squad, picks, None
+
+
+def actions_for(
+    entry_id: int,
+    horizon: int = DEFAULT_HORIZON,
+    cookie: str | None = None,
+    saved_squad: Mapping | None = None,
+) -> dict:
     """What this manager should actually *do*, in priority order.
 
     Everything else in the app reports: here are projections, here is a ticker,
@@ -79,19 +140,25 @@ def actions_for(entry_id: int, horizon: int = DEFAULT_HORIZON) -> dict:
     )
     swings = {int(s["team_id"]): s for s in ticker_result.get("swings", [])}
 
-    squad, my_ids, bench_ids = [], set(), set()
+    squad, picks, unavailable = _squad_for_advice(
+        entry_id, gameweek, started, cookie, saved_squad
+    )
+    my_ids = {int(p["id"]) for p in squad}
+    bench_ids = {
+        int(p["element"])
+        for p in picks
+        # Pre-deadline my-team payloads carry position rather than multiplier;
+        # 12-15 is the bench either way.
+        if int(p.get("multiplier", 1)) == 0 or int(p.get("position", 0)) > 11
+    }
     free_transfers = 1
     if started:
         try:
-            squad_state = load_squad_state(entry_id, gameweek)
-            squad = list(squad_state.get("squad") or [])
-            my_ids = {int(p["id"]) for p in squad}
-            free_transfers = int(squad_state.get("free_transfers") or 1)
-            for pick in squad_state.get("picks") or []:
-                if int(pick.get("multiplier", 0)) == 0:
-                    bench_ids.add(int(pick["element"]))
+            free_transfers = int(
+                load_squad_state(entry_id, gameweek).get("free_transfers") or 1
+            )
         except ServiceError:
-            squad = []
+            pass
 
     items: list[dict] = []
 
@@ -181,7 +248,14 @@ def actions_for(entry_id: int, horizon: int = DEFAULT_HORIZON) -> dict:
     chip_advice = []
     windows = chips_mod.windows(projection.data.get("chips", []))
     history = fpl_client.history(entry_id) or {}
-    for chip in chips_mod.available(windows, history.get("chips") or [], gameweek):
+    open_now = [
+        c
+        for c in chips_mod.available(windows, history.get("chips") or [], gameweek)
+        # The second-half copy of every chip is real but months away. Listing it
+        # doubles the section and buries the four that can be played this half.
+        if chips_mod.in_current_half(c["start"], gameweek)
+    ]
+    for chip in open_now:
         value, detail = 0.0, ""
         if chip["name"] == "3xc":
             value, name = chips_mod.triple_captain_value(
@@ -221,10 +295,18 @@ def actions_for(entry_id: int, horizon: int = DEFAULT_HORIZON) -> dict:
         chip_advice.append(chips_mod.recommend(chip, value, gameweek, detail))
 
     items.sort(key=lambda i: (i["priority"], -len(i.get("detail", ""))))
+
+    # Advice about a squad we could not read is advice about nobody. Ranking a
+    # buy target above an injury we never saw would be worse than saying so.
+    if unavailable:
+        items = [i for i in items if i["priority"] >= 4]
+
     return {
         "gameweek": gameweek,
         "season_started": started,
         "squad_size": len(squad),
+        "squad_available": unavailable is None,
+        "unavailable_reason": unavailable,
         "actions": items[:8],
         "chips": chip_advice,
     }

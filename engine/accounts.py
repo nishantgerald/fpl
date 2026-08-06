@@ -16,6 +16,7 @@ random values stored server-side so logout actually revokes.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import secrets
@@ -23,6 +24,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from typing import Sequence
 
 from cryptography.fernet import Fernet, InvalidToken
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -104,6 +106,13 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS fpl_cookies (
                 user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                 ciphertext BLOB NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS saved_squads (
+                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                element_ids TEXT NOT NULL,
+                bench_ids TEXT NOT NULL,
+                source TEXT NOT NULL,
                 updated_at REAL NOT NULL
             );
             """
@@ -381,6 +390,61 @@ def cookie_for(user_id: int) -> str | None:
 def delete_cookie(user_id: int) -> None:
     with _lock, _connect() as conn:
         conn.execute("DELETE FROM fpl_cookies WHERE user_id = ?", (user_id,))
+
+
+# ---------------------------------------------------------------- saved squads
+
+
+def store_squad(
+    user_id: int,
+    element_ids: Sequence[int],
+    bench_ids: Sequence[int] = (),
+    source: str = "screenshot",
+) -> None:
+    """Remember the fifteen a user told us they own.
+
+    Before the first deadline a squad is private to FPL, so without a session
+    cookie there is nothing to give advice about — which is exactly when advice
+    is most useful, because everything is still changeable. A squad read off a
+    screenshot is a perfectly good answer to that, but only if it outlives the
+    request that parsed it.
+    """
+    with _lock, _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO saved_squads (user_id, element_ids, bench_ids, source, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (user_id) DO UPDATE SET
+                element_ids = excluded.element_ids,
+                bench_ids = excluded.bench_ids,
+                source = excluded.source,
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_id,
+                json.dumps([int(i) for i in element_ids]),
+                json.dumps([int(i) for i in bench_ids]),
+                source,
+                time.time(),
+            ),
+        )
+
+
+def saved_squad(user_id: int) -> dict | None:
+    with _lock, _connect() as conn:
+        row = conn.execute(
+            "SELECT element_ids, bench_ids, source, updated_at FROM saved_squads"
+            " WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "element_ids": json.loads(row["element_ids"]),
+        "bench_ids": json.loads(row["bench_ids"]),
+        "source": row["source"],
+        "updated_at": row["updated_at"],
+    }
 
 
 def has_cookie(user_id: int) -> bool:

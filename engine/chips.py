@@ -109,8 +109,23 @@ def available(
     return out
 
 
+#: First gameweek of the second half. Each chip exists twice per season, and
+#: the two copies have separate windows either side of this.
+HALF_BOUNDARY = 20
+
+
 def _half(gameweek: int) -> int:
-    return 1 if gameweek < 20 else 2
+    return 1 if gameweek < HALF_BOUNDARY else 2
+
+
+def in_current_half(start_gameweek: int, gameweek: int) -> bool:
+    """Whether a chip window belongs to the half the manager is playing now.
+
+    The other half's copy is real, but it is up to nineteen gameweeks away;
+    showing it alongside the playable ones doubles the list and halves the
+    signal.
+    """
+    return _half(start_gameweek) == _half(max(gameweek, 1))
 
 
 def triple_captain_value(
