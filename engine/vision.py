@@ -103,7 +103,15 @@ def read_image(image: bytes, prompt: str, suffix: str = ".png") -> str:
                     "--add-dir",
                     scratch,
                 ],
-                input=f"{prompt}\n\nThe image is at: {image_path}\n",
+                # Named relative to the working directory, never absolutely.
+                # The scratch directory is the cwd on both sides, but it is a
+                # *different* directory on each: run through the relay, an
+                # absolute path from this machine does not exist on the one
+                # holding the file, and the model is left guessing. It
+                # sometimes recovered by listing the directory and sometimes
+                # reported it could not find the image — which surfaced as an
+                # intermittent "no player names could be read".
+                input=f"{prompt}\n\nThe image is the file ./{image_path.name}\n",
                 timeout=TIMEOUT_SECONDS,
                 cwd=scratch,
                 # The relay runs on another machine, so the bytes have to travel

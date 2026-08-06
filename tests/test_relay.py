@@ -47,7 +47,9 @@ def relay(keypair, monkeypatch, tmp_path):
     fake_cli.write_text(
         "#!/bin/sh\n"
         "echo \"ARGS: $*\"\n"
-        "cat >/dev/null\n"
+        # Echo the prompt rather than discard it, so a test can assert on what
+        # the model was actually told, not on how we meant to phrase it.
+        "cat\n"
         "ls . | sed 's/^/FILE: /'\n"
     )
     fake_cli.chmod(0o755)
@@ -286,3 +288,39 @@ def test_keygen_produces_a_pair_that_verifies():
     assert claude_cli.verify(
         public, timestamp, nonce, body, claude_cli.sign(private, timestamp, nonce, body)
     )
+
+
+def test_the_image_is_named_relative_to_the_working_directory(relay, monkeypatch):
+    """The bug that made screenshot import fail intermittently in production.
+
+    vision.read_image used to tell the model "the image is at
+    /tmp/fpl-vision-xxxx/squad.png" — an absolute path on the *calling*
+    machine. Through the relay the file lives in a different scratch directory
+    on a different host, so the model was handed a path that does not exist. It
+    sometimes recovered by listing the working directory and sometimes reported
+    it could not find the image, which surfaced to users as "no player names
+    could be read from that screenshot".
+
+    The earlier relay tests missed it because a developer machine has a real
+    CLI on PATH, so they exercised the local path and never the relay's.
+    """
+    from engine import vision
+
+    # Only the *caller's* binary is unrunnable. FCPS_CLAUDE_BIN is left
+    # pointing at the stub, because the relay reads it too and both ends share
+    # one process in this test.
+    # Must be a binary that is NOT runnable here, or claude_cli runs it
+    # locally and the relay is never exercised — which is precisely how
+    # the original bug survived a green test run.
+    monkeypatch.setattr(vision, "_binary", lambda: "/nonexistent/claude")
+
+    # The stub echoes the prompt it was given, so the assertion is about what
+    # the model is actually told rather than about our own formatting call.
+    prompt_seen = vision.read_image(b"\x89PNG\r\n\x1a\n fake", "read this")
+
+    assert "/tmp/fpl-vision" not in prompt_seen, (
+        "the model was given an absolute path from the calling machine"
+    )
+    assert "./squad.png" in prompt_seen
+    # And the file really is there under that name, in the working directory.
+    assert "FILE: squad.png" in prompt_seen
