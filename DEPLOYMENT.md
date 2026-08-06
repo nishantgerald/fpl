@@ -39,7 +39,7 @@ vendor-specific.
 | Variable | Why |
 |---|---|
 | `FPL_APP_VAULT_KEY` | Encrypts stored FPL session cookies. Generated to a file locally, but a hosted filesystem is usually ephemeral — a regenerated key makes every stored cookie permanently unreadable and silently disconnects every user. Generate once with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and never change it. |
-| `FPL_APP_DB` | SQLite path. On an ephemeral filesystem this loses every account on restart; move to Postgres before real traffic. |
+| `FPL_APP_DB` | SQLite path, used only when `DATABASE_URL` is unset. Local development and tests; never a hosted deployment. |
 | `PUBLIC_BASE_URL` | The origin used to build links in outbound email. Without it, a password-reset link points at whatever host served the request. |
 | `TRUST_PROXY_HEADER=true` | Only behind a proxy that rewrites `X-Forwarded-For`. Without it every user shares one rate-limit bucket; with it set on a directly-exposed app, anyone can forge a fresh identity per request. |
 
