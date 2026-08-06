@@ -9,6 +9,7 @@ anything). That asymmetry is the security property under test.
 
 import base64
 import json
+import time
 
 import pytest
 import requests
@@ -23,7 +24,6 @@ def _fresh_db(monkeypatch, tmp_path):
     monkeypatch.setattr(accounts, "KEY_PATH", tmp_path / "vault.key")
     accounts.init_db()
     flask_app._auth_attempts.clear()
-    flask_app._google_states.clear()
 
 
 @pytest.fixture
@@ -182,10 +182,108 @@ def test_the_full_redirect_flow_mints_a_working_session(
 
 
 def test_a_forged_state_is_rejected(client, _google_env):
+    # With a legitimate cookie in place, so the rejection is provably about the
+    # forged signature rather than the missing cookie.
+    client.set_cookie(flask_app._GOOGLE_NONCE_COOKIE, "n", path="/api/auth/google")
+
     response = client.get("/api/auth/google/callback?state=made-up&code=x")
 
     assert response.status_code == 302
     assert "auth_error=state_mismatch" in response.headers["Location"]
+
+
+# ------------------------------------------------- state across worker processes
+
+
+def test_a_state_verifies_without_the_worker_that_issued_it(
+    monkeypatch, client, _google_env
+):
+    """The bug that broke production: under gunicorn the callback lands on a
+    different worker than /start, so anything held in process memory is gone.
+
+    Nothing here calls /start — the state and its cookie are built from the
+    client secret alone, which is what every worker shares. If verifying ever
+    needs a record of the issuing request again, this fails.
+    """
+    nonce = "nonce-from-another-process"
+    state = flask_app._issue_google_state(nonce)
+    client.set_cookie(flask_app._GOOGLE_NONCE_COOKIE, nonce, path="/api/auth/google")
+    monkeypatch.setattr(
+        flask_app.requests, "post", lambda *a, **k: _FakeExchange(_fake_id_token())
+    )
+
+    response = client.get(f"/api/auth/google/callback?state={state}&code=x")
+
+    assert "auth_error" not in response.headers["Location"]
+    assert "token=" in response.headers["Location"]
+
+
+def test_a_state_is_useless_in_a_browser_that_did_not_ask_for_it(client, _google_env):
+    """Binding to the cookie is what keeps this a CSRF defence. Without it a
+    signed state would be a bearer token anyone could paste."""
+    state = flask_app._issue_google_state("the-real-browsers-nonce")
+    client.set_cookie(
+        flask_app._GOOGLE_NONCE_COOKIE, "some-other-browser", path="/api/auth/google"
+    )
+
+    response = client.get(f"/api/auth/google/callback?state={state}&code=x")
+
+    assert "auth_error=state_mismatch" in response.headers["Location"]
+
+
+def test_a_missing_cookie_is_reported_as_a_blocked_cookie(client, _google_env):
+    """Distinct from a mismatch: nothing the user retries will fix it, so the
+    message has to send them somewhere else."""
+    state = flask_app._issue_google_state("whatever")
+
+    response = client.get(f"/api/auth/google/callback?state={state}&code=x")
+
+    assert "auth_error=cookie_blocked" in response.headers["Location"]
+
+
+def test_a_stale_state_expires(monkeypatch, client, _google_env):
+    state = flask_app._issue_google_state("n")
+    client.set_cookie(flask_app._GOOGLE_NONCE_COOKIE, "n", path="/api/auth/google")
+    # Capture the real clock first — flask_app.time *is* this module's `time`,
+    # so patching it with a lambda that calls time.time() recurses forever.
+    now = time.time()
+    monkeypatch.setattr(
+        flask_app.time, "time", lambda: now + flask_app._GOOGLE_STATE_TTL + 30
+    )
+
+    response = client.get(f"/api/auth/google/callback?state={state}&code=x")
+
+    assert "auth_error=state_expired" in response.headers["Location"]
+
+
+def test_the_nonce_cookie_is_cleared_after_the_callback(
+    monkeypatch, client, _google_env
+):
+    """One redirect back is all it's good for; a live cookie would let the
+    same state be replayed until it expired."""
+    nonce = "single-use"
+    state = flask_app._issue_google_state(nonce)
+    client.set_cookie(flask_app._GOOGLE_NONCE_COOKIE, nonce, path="/api/auth/google")
+    monkeypatch.setattr(
+        flask_app.requests, "post", lambda *a, **k: _FakeExchange(_fake_id_token())
+    )
+
+    first = client.get(f"/api/auth/google/callback?state={state}&code=x")
+    assert "auth_error" not in first.headers["Location"]
+
+    # The test client honours Set-Cookie, so the deletion carries into the retry.
+    replay = client.get(f"/api/auth/google/callback?state={state}&code=x")
+    assert "auth_error=cookie_blocked" in replay.headers["Location"]
+
+
+def test_start_sets_a_nonce_cookie_that_survives_googles_redirect(client, _google_env):
+    """SameSite=Strict would strip the cookie on the way back from Google and
+    break sign-in for everyone — the failure this whole mechanism exists to fix."""
+    cookie = client.get("/api/auth/google/start").headers["Set-Cookie"]
+
+    assert flask_app._GOOGLE_NONCE_COOKIE in cookie
+    assert "SameSite=Lax" in cookie
+    assert "HttpOnly" in cookie
 
 
 @pytest.mark.parametrize(

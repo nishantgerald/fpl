@@ -21,6 +21,8 @@ and ``PRDs/ml-methodology.md`` for how the trained model was built and validated
 """
 
 import base64
+import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -811,7 +813,58 @@ def _auth_required():
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 _GOOGLE_STATE_TTL = 600
-_google_states: dict[str, float] = {}
+_GOOGLE_NONCE_COOKIE = "fpl_oauth_nonce"
+
+
+# The OAuth state defeats CSRF only if the server can tell "I issued this" on
+# the way back. Holding issued states in a dict makes that a claim about one
+# *process*: under gunicorn the callback lands on whichever worker is free, so
+# a state issued by worker A is unknown to worker B and the sign-in fails
+# perhaps two times in three. A single-process dev server never sees it.
+#
+# So the state carries its own proof instead of being looked up: a timestamp
+# plus an HMAC over that timestamp and a nonce we set as a cookie. Any worker,
+# any dyno, any restart can verify it, because nothing is remembered. Binding
+# to the cookie is what keeps it a CSRF defence rather than a bare timestamp —
+# a state is only good in the browser that asked for it.
+def _google_state_key() -> bytes:
+    explicit = os.getenv("FPL_APP_STATE_SECRET", "").strip()
+    # Deriving from the client secret means there is no new config var to set
+    # and forget: it is present exactly when Google sign-in is on, and is
+    # identical across every worker. Hashed with a domain tag so this key can
+    # never be mistaken for — or replayed as — the secret itself.
+    material = explicit or _google_client()[1]
+    return hashlib.sha256(b"fpl:google-oauth-state:v1:" + material.encode()).digest()
+
+
+def _issue_google_state(nonce: str) -> str:
+    issued = str(int(time.time()))
+    sig = hmac.new(
+        _google_state_key(), f"{issued}:{nonce}".encode(), hashlib.sha256
+    ).hexdigest()
+    return f"{issued}.{sig}"
+
+
+def _check_google_state(state: str, nonce: str) -> str | None:
+    """None if the state is good, otherwise the failure code."""
+    if not nonce:
+        # Google's redirect is a top-level GET, which SameSite=Lax permits, so
+        # this is a browser blocking cookies outright rather than normal
+        # cross-site stripping. Worth its own code: nothing we sign will fix it.
+        return "cookie_blocked"
+    issued, _, sig = state.partition(".")
+    expected = hmac.new(
+        _google_state_key(), f"{issued}:{nonce}".encode(), hashlib.sha256
+    ).hexdigest()
+    if not sig or not hmac.compare_digest(sig, expected):
+        return "state_mismatch"
+    try:
+        age = time.time() - int(issued)
+    except ValueError:
+        return "state_mismatch"
+    if age > _GOOGLE_STATE_TTL or age < -60:
+        return "state_expired"
+    return None
 
 
 def _google_client():
@@ -852,13 +905,8 @@ def google_start():
             {"code": "google_not_configured", "error": "Google sign-in isn't set up."}
         ), 503
 
-    now = time.time()
-    for stale in [s for s, exp in _google_states.items() if exp < now]:
-        _google_states.pop(stale, None)
-    state = secrets.token_urlsafe(24)
-    _google_states[state] = now + _GOOGLE_STATE_TTL
-
-    return redirect(
+    nonce = secrets.token_urlsafe(18)
+    response = redirect(
         GOOGLE_AUTH_URL
         + "?"
         + urlencode(
@@ -867,22 +915,45 @@ def google_start():
                 "redirect_uri": _google_redirect_uri(),
                 "response_type": "code",
                 "scope": "openid email",
-                "state": state,
+                "state": _issue_google_state(nonce),
                 "prompt": "select_account",
             }
         )
     )
+    response.set_cookie(
+        _GOOGLE_NONCE_COOKIE,
+        nonce,
+        max_age=_GOOGLE_STATE_TTL,
+        httponly=True,
+        # Lax, not Strict: Google's redirect back is a cross-site top-level
+        # navigation, which Strict would strip — taking the cookie, and the
+        # sign-in, with it.
+        samesite="Lax",
+        secure=_google_redirect_uri().startswith("https://"),
+        path="/api/auth/google",
+    )
+    return response
 
 
 @app.route("/api/auth/google/callback")
 def google_callback():
     # Errors land back in the app as a query code, not a JSON wall: the user
     # is mid-redirect in a browser, not a JSON consumer.
-    def fail(code):
-        return redirect(f"/app/#/account?auth_error={code}")
+    def done(target):
+        response = redirect(target)
+        # One redirect back is all the nonce is for; leaving it live would let
+        # a second callback replay the same state.
+        response.delete_cookie(_GOOGLE_NONCE_COOKIE, path="/api/auth/google")
+        return response
 
-    if _google_states.pop(request.args.get("state", ""), None) is None:
-        return fail("state_mismatch")
+    def fail(code):
+        return done(f"/app/#/account?auth_error={code}")
+
+    bad = _check_google_state(
+        request.args.get("state", ""), request.cookies.get(_GOOGLE_NONCE_COOKIE, "")
+    )
+    if bad:
+        return fail(bad)
     code = request.args.get("code")
     if not code:
         return fail(request.args.get("error", "cancelled"))
@@ -926,7 +997,7 @@ def google_callback():
     # Land on the team, not the settings page. Signing in is a means to seeing
     # your squad; dropping the user on a form is answering a question they
     # didn't ask.
-    return redirect(f"/app/#/team?token={token}")
+    return done(f"/app/#/team?token={token}")
 
 
 @app.route("/api/me/password", methods=["POST"])
