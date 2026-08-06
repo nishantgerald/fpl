@@ -251,3 +251,54 @@ def test_the_preview_never_fires_once_the_season_is_under_way(monkeypatch):
 
     assert squad == []
     assert reason == "entry_not_found"
+
+
+def test_rebuild_bypasses_the_draft_cache(monkeypatch):
+    """The Rebuild button's whole job.
+
+    Without this the hour-long cache answered and the control re-rendered
+    identical bytes, which reads as a broken button rather than as a squad that
+    genuinely has not moved.
+    """
+    service._draft_cache.clear()
+    calls = []
+
+    monkeypatch.setattr(
+        service.fpl_client,
+        "season_state",
+        lambda: {"started": False, "gameweek": 1, "gameweek_name": "GW1", "deadline": "x"},
+    )
+
+    def _fake_projections(horizon, engine):
+        calls.append(1)
+        raise service.ServiceError("stop", "counted", status=500)
+
+    monkeypatch.setattr(service, "projections_for", _fake_projections)
+
+    for _ in range(2):
+        with pytest.raises(service.ServiceError):
+            service.draft_squad(horizon=5, refresh=True)
+
+    # Both calls got through to the compute rather than one being served warm.
+    assert len(calls) == 2
+
+
+def test_without_refresh_the_cache_still_answers(monkeypatch):
+    """The cache is there for a reason — an ordinary page load must not pay for
+    a full optimiser run."""
+    service._draft_cache.clear()
+    service._draft_cache["5:xpts:"] = (9e18, {"squad": [{"id": 1}]})
+
+    monkeypatch.setattr(
+        service.fpl_client,
+        "season_state",
+        lambda: {"started": False, "gameweek": 1, "gameweek_name": "GW1", "deadline": "x"},
+    )
+    monkeypatch.setattr(
+        service,
+        "projections_for",
+        lambda h, e: pytest.fail("recomputed despite a warm cache"),
+    )
+
+    assert service.draft_squad(horizon=5) == {"squad": [{"id": 1}]}
+    service._draft_cache.clear()

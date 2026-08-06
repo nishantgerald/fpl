@@ -996,7 +996,9 @@ _draft_cache: dict[str, tuple] = {}
 _DRAFT_TTL_SECONDS = 3600
 
 
-def draft_squad(horizon: int = 5, engine: str = "xpts", pinned=()) -> dict:
+def draft_squad(
+    horizon: int = 5, engine: str = "xpts", pinned=(), refresh: bool = False
+) -> dict:
     """A recommended opening fifteen, for the window before the GW1 deadline.
 
     Raises :class:`ServiceError` once the season is under way — at that point
@@ -1021,7 +1023,13 @@ def draft_squad(horizon: int = 5, engine: str = "xpts", pinned=()) -> dict:
 
     key = f"{horizon}:{engine}:{','.join(sorted(pinned))}"
     cached = _draft_cache.get(key)
-    if cached and _time.time() - cached[0] < _DRAFT_TTL_SECONDS:
+    # ``refresh`` is what the Rebuild button asks for. Without it the hour-long
+    # cache answers, so the button re-rendered identical bytes and looked
+    # broken. It still often *will* be identical — the optimiser is
+    # deterministic, so the squad only moves when prices, news or projections
+    # do — which is why the caller is told whether anything changed rather than
+    # left to infer it from a screen that did not flicker.
+    if not refresh and cached and _time.time() - cached[0] < _DRAFT_TTL_SECONDS:
         return cached[1]
 
     projection = projections_for(horizon, engine)

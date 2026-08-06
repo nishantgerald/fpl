@@ -1731,6 +1731,9 @@ def draft_squad():
                 ),
                 engine=_engine_arg(),
                 pinned=pinned,
+                # What the Rebuild button sends. Skipping the hour-long cache is
+                # the only way the control can honestly claim to rebuild.
+                refresh=request.args.get("refresh") in ("1", "true"),
             )
         )
     )
