@@ -43,6 +43,7 @@ from flask_cors import CORS
 from engine import captain as captain_engine
 from engine import (
     accounts,
+    chips,
     content,
     digest,
     fcps_llm,
@@ -1443,6 +1444,44 @@ def me_digest_subscribe():
         return _auth_required()
     accounts.set_deadline_email(user["id"], request.method == "POST")
     return jsonify({"subscribed": request.method == "POST"})
+
+
+@app.route("/api/me/actions")
+def me_actions():
+    """What to actually do before the deadline, and where the chips stand.
+
+    Everything else reports; this decides. It exists because a fixture ticker
+    is trivia until it is joined to the fifteen players someone owns.
+    """
+    user = _current_user()
+    if user is None:
+        return _auth_required()
+    link = accounts.fpl_link(user["id"])
+    if link is None:
+        return jsonify(
+            {"code": "no_fpl_link", "error": "Link your FPL Team ID first."}
+        ), 400
+
+    result = service.actions_for(
+        link["entry_id"],
+        horizon=_int_arg("horizon", service.DEFAULT_HORIZON, 1, service.MAX_HORIZON),
+    )
+    result["meta"] = fpl_client.meta()
+    return jsonify(result)
+
+
+@app.route("/api/chips")
+def chips_windows():
+    """Chip windows for the season, straight from FPL's own rules."""
+    data = fpl_client.bootstrap()
+    state = fpl_client.season_state() or {}
+    return jsonify(
+        {
+            "gameweek": state.get("gameweek"),
+            "chips": chips.windows(data.get("chips", [])),
+            "meta": fpl_client.meta(),
+        }
+    )
 
 
 @app.route("/api/me/leagues")

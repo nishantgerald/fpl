@@ -27,9 +27,11 @@ from . import fcps_llm, fpl_client, reconstruct, research
 from . import leagues as leagues_mod
 from . import captain as captain_mod
 from . import digest
+from . import chips as chips_mod
 from . import squad_import, vision
 from . import free_transfers as ft_mod
 from . import ml_scorer, money, optimizer, rules
+from . import ticker as ticker_mod
 
 DEFAULT_HORIZON = 5
 MAX_HORIZON = 8
@@ -51,6 +53,181 @@ class ServiceError(Exception):
 
 
 # ---------------------------------------------------------------- squad state
+
+
+def actions_for(entry_id: int, horizon: int = DEFAULT_HORIZON) -> dict:
+    """What this manager should actually *do*, in priority order.
+
+    Everything else in the app reports: here are projections, here is a ticker,
+    here are standings. Reporting is not advice. This ties what we know about
+    the fixtures to the fifteen players they own and answers the only question
+    they came with — what should I change before Saturday?
+
+    Ordered by urgency, because a message read from the top must lead with the
+    thing that costs points if ignored.
+    """
+    state = fpl_client.season_state() or {}
+    gameweek = state.get("gameweek") or 1
+    started = bool(state.get("started"))
+
+    projection = projections_for(horizon, ml_scorer.DEFAULT_ENGINE)
+    elements = {int(e["id"]): e for e in projection.data.get("elements", [])}
+    teams = {int(t["id"]): t for t in projection.data.get("teams", [])}
+
+    ticker_result = ticker_mod.build_ticker(
+        fpl_client.fixtures() or [], projection.data.get("teams", []), gameweek, 8
+    )
+    swings = {int(s["team_id"]): s for s in ticker_result.get("swings", [])}
+
+    squad, my_ids, bench_ids = [], set(), set()
+    free_transfers = 1
+    if started:
+        try:
+            squad_state = load_squad_state(entry_id, gameweek)
+            squad = list(squad_state.get("squad") or [])
+            my_ids = {int(p["id"]) for p in squad}
+            free_transfers = int(squad_state.get("free_transfers") or 1)
+            for pick in squad_state.get("picks") or []:
+                if int(pick.get("multiplier", 0)) == 0:
+                    bench_ids.add(int(pick["element"]))
+        except ServiceError:
+            squad = []
+
+    items: list[dict] = []
+
+    # 1. Availability. A flagged player in the XI costs points this week and
+    #    outranks anything about fixtures four weeks out.
+    for player in squad:
+        status = str(player.get("status", "a"))
+        if status in ("i", "s", "u", "n"):
+            items.append(
+                {
+                    "priority": 1,
+                    "kind": "unavailable",
+                    "player": player.get("web_name"),
+                    "headline": f"{player.get('web_name')} is unavailable",
+                    "detail": player.get("news")
+                    or "Flagged by FPL — he will score nothing.",
+                    "action": "Replace him or move him to the bench.",
+                }
+            )
+        elif status == "d":
+            chance = player.get("chance_of_playing_next_round")
+            items.append(
+                {
+                    "priority": 2,
+                    "kind": "doubtful",
+                    "player": player.get("web_name"),
+                    "headline": f"{player.get('web_name')} is doubtful"
+                    + (f" ({chance}%)" if chance is not None else ""),
+                    "detail": player.get("news") or "Check the team news.",
+                    "action": "Have a bench option ready.",
+                }
+            )
+
+    # 2. Fixture swings, but only for clubs this manager is actually exposed
+    #    to. A swing at a club they do not own is trivia.
+    for player in squad:
+        swing = swings.get(int(player.get("team", 0)))
+        if not swing:
+            continue
+        owned = player.get("web_name")
+        if swing["direction"] == "worsening":
+            items.append(
+                {
+                    "priority": 3,
+                    "kind": "fixtures_worsening",
+                    "player": owned,
+                    "headline": f"{owned}'s fixtures turn from GW{swing['from_gameweek']}",
+                    "detail": swing["message"],
+                    "action": f"Sell before GW{swing['from_gameweek']}, "
+                    "while his run still looks good to everyone else.",
+                }
+            )
+
+    # 3. Buy targets: improving runs at clubs they do *not* own, ranked by the
+    #    projection of the best player available there.
+    for team_id, swing in swings.items():
+        if swing["direction"] != "improving":
+            continue
+        candidates = [
+            (float(projection.projections.get(int(e["id"]), {}).get("horizon_xpts") or 0), e)
+            for e in elements.values()
+            if int(e.get("team", 0)) == team_id
+            and int(e["id"]) not in my_ids
+            and str(e.get("status", "a")) == "a"
+        ]
+        if not candidates:
+            continue
+        best_value, best_element = max(candidates, key=lambda c: c[0])
+        if best_value <= 0:
+            continue
+        items.append(
+            {
+                "priority": 4,
+                "kind": "fixtures_improving",
+                "player": best_element.get("web_name"),
+                "headline": f"{teams.get(team_id, {}).get('name', swing['team'])}"
+                f"'s run eases from GW{swing['from_gameweek']}",
+                "detail": swing["message"],
+                "action": f"{best_element.get('web_name')} "
+                f"(£{int(best_element.get('now_cost', 0)) / 10:.1f}m) is their "
+                f"best option — {best_value:.0f} pts over {horizon} GWs. Buy a "
+                "gameweek early to own the whole run.",
+            }
+        )
+
+    # 4. Chips, valued against this squad rather than in the abstract.
+    chip_advice = []
+    windows = chips_mod.windows(projection.data.get("chips", []))
+    history = fpl_client.history(entry_id) or {}
+    for chip in chips_mod.available(windows, history.get("chips") or [], gameweek):
+        value, detail = 0.0, ""
+        if chip["name"] == "3xc":
+            value, name = chips_mod.triple_captain_value(
+                [projection.projections.get(int(p["id"]), {}) | {"web_name": p.get("web_name")}
+                 for p in squad]
+            )
+            detail = f"Best on {name}." if name else ""
+        elif chip["name"] == "bboost":
+            value = chips_mod.bench_boost_value(
+                [projection.projections.get(pid, {}) for pid in bench_ids]
+            )
+            detail = "Worth what your four bench players score."
+        elif chip["name"] == "freehit":
+            squad_xi = sum(
+                float(projection.projections.get(int(p["id"]), {}).get("xpts_next") or 0)
+                for p in squad
+            )
+            best = sorted(
+                (float(v.get("xpts_next") or 0) for v in projection.projections.values()),
+                reverse=True,
+            )[:11]
+            value = chips_mod.free_hit_value(squad_xi * 11 / max(len(squad), 1), sum(best))
+            detail = "Biggest in a blank gameweek."
+        elif chip["name"] == "wildcard":
+            squad_total = sum(
+                float(projection.projections.get(int(p["id"]), {}).get("horizon_xpts") or 0)
+                for p in squad
+            )
+            try:
+                optimal = float(
+                    (draft_squad(horizon=horizon).get("squad") or {}).get("horizon_xpts") or 0
+                )
+            except Exception:
+                optimal = squad_total
+            value = chips_mod.wildcard_value(squad_total, optimal, free_transfers)
+            detail = "Measured against the best legal squad."
+        chip_advice.append(chips_mod.recommend(chip, value, gameweek, detail))
+
+    items.sort(key=lambda i: (i["priority"], -len(i.get("detail", ""))))
+    return {
+        "gameweek": gameweek,
+        "season_started": started,
+        "squad_size": len(squad),
+        "actions": items[:8],
+        "chips": chip_advice,
+    }
 
 
 def import_screenshot(image: bytes, mime: str = "") -> dict:
