@@ -63,7 +63,7 @@ class _FakeExchange:
 
 
 def test_a_new_google_user_gets_a_passwordless_record():
-    token = accounts.login_google("sub-1", "new@example.com")
+    token, _ = accounts.login_google("sub-1", "new@example.com")
     user = accounts.user_for_token(token)
 
     assert user["email"] == "new@example.com"
@@ -74,7 +74,7 @@ def test_google_login_consolidates_into_an_existing_password_account():
     """Same email, one record afterwards — not a duplicate."""
     original = accounts.register("nish@example.com", "a-decent-password")
 
-    token = accounts.login_google("sub-1", "nish@example.com")
+    token, _ = accounts.login_google("sub-1", "nish@example.com")
     via_google = accounts.user_for_token(token)
 
     assert via_google["id"] == original["id"]
@@ -90,8 +90,8 @@ def test_google_login_consolidates_into_an_existing_password_account():
 
 def test_a_returning_google_user_matches_by_sub_not_email():
     """Changing the email on the Google account must not fork the record."""
-    first = accounts.user_for_token(accounts.login_google("sub-1", "old@example.com"))
-    second = accounts.user_for_token(accounts.login_google("sub-1", "new@example.com"))
+    first = accounts.user_for_token(accounts.login_google("sub-1", "old@example.com")[0])
+    second = accounts.user_for_token(accounts.login_google("sub-1", "new@example.com")[0])
 
     assert first["id"] == second["id"]
 
@@ -111,7 +111,7 @@ def test_registering_over_a_google_only_account_is_refused_with_directions(clien
     assert body["code"] == "email_taken"
     assert "Google" in body["error"]
     # And the record is untouched.
-    user = accounts.user_for_token(accounts.login_google("sub-1", "nish@example.com"))
+    user = accounts.user_for_token(accounts.login_google("sub-1", "nish@example.com")[0])
     assert accounts.login_methods(user["id"])["password"] is False
 
 
@@ -126,7 +126,7 @@ def test_password_login_on_a_google_only_account_fails_generically():
 
 def test_set_password_is_the_safe_path_to_both_methods(client):
     """Google-first user adds a password from inside their session."""
-    token = accounts.login_google("sub-1", "nish@example.com")
+    token, _ = accounts.login_google("sub-1", "nish@example.com")
     headers = {"Authorization": f"Bearer {token}"}
 
     response = client.post(
@@ -230,6 +230,24 @@ def test_migration_adds_the_column_to_a_pre_google_database(tmp_path, monkeypatc
     monkeypatch.setattr(accounts, "DB_PATH", db)
 
     accounts.init_db()
-    token = accounts.login_google("sub-1", "old@example.com")
+    token, _ = accounts.login_google("sub-1", "old@example.com")
 
     assert accounts.user_for_token(token)["email"] == "old@example.com"
+
+
+def test_a_first_google_sign_in_reports_that_it_created_the_account():
+    """The caller needs to know, because a welcome email is owed exactly once."""
+    _, created_first = accounts.login_google("sub-1", "new@example.com")
+    _, created_again = accounts.login_google("sub-1", "new@example.com")
+
+    assert created_first is True
+    assert created_again is False
+
+
+def test_google_consolidation_into_an_existing_account_is_not_a_creation():
+    """No welcome email for someone who already has an account."""
+    accounts.register("nish@example.com", "a-decent-password")
+
+    _, created = accounts.login_google("sub-1", "nish@example.com")
+
+    assert created is False

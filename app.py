@@ -915,10 +915,17 @@ def google_callback():
         return fail("unverified_email")
 
     try:
-        token = accounts.login_google(str(claims.get("sub", "")), claims["email"])
+        token, created = accounts.login_google(
+            str(claims.get("sub", "")), claims["email"]
+        )
     except accounts.AccountError:
         return fail("bad_google_identity")
-    return redirect(f"/app/#/account?token={token}")
+    if created:
+        _send_welcome(claims["email"])
+    # Land on the team, not the settings page. Signing in is a means to seeing
+    # your squad; dropping the user on a form is answering a question they
+    # didn't ask.
+    return redirect(f"/app/#/team?token={token}")
 
 
 @app.route("/api/me/password", methods=["POST"])
@@ -951,6 +958,7 @@ def auth_register():
         token = accounts.authenticate(body.get("email", ""), body.get("password", ""))
     except accounts.AccountError as exc:
         return jsonify({"code": exc.code, "error": str(exc)}), 400
+    _send_welcome(user["email"])
     return jsonify({"token": token, "user": user}), 201
 
 
@@ -969,6 +977,51 @@ def auth_login():
         return jsonify({"code": exc.code, "error": str(exc)}), 401
     user = accounts.user_for_token(token)
     return jsonify({"token": token, "user": user})
+
+
+def _send_welcome(email: str) -> None:
+    """Greet a brand-new account, once.
+
+    Also the honest place to disclose that deadline briefings are on: an email
+    the user did not ask for is only acceptable if the first one says so and
+    shows the way out. Best-effort — a failure here must never break signing up.
+    """
+    account_url = _canonical("/app/") + "#/account"
+    text = (
+        "Welcome to FPL Companion.\n\n"
+        "Three things worth knowing:\n\n"
+        "1. Link your FPL Team ID and every screen fills in with your own "
+        "squad — projections, captain picks, transfers, mini-league.\n"
+        "2. Before each deadline we'll email you one short briefing: your "
+        "captain, the transfer worth making (or a clear call to roll), and "
+        "anything in your squad that has become a problem.\n"
+        "3. If you'd rather not have that, one switch turns it off:\n"
+        f"   {account_url}\n\n"
+        "Projections are estimates, not guarantees. Check team news before "
+        "the deadline.\n"
+    )
+    html = (
+        '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,'
+        'Roboto,Helvetica,Arial,sans-serif;max-width:520px;margin:0 auto;'
+        'color:#1a1a2e">'
+        "<h1 style=\"font-size:20px\">Welcome to FPL Companion</h1>"
+        "<p>Link your FPL Team ID and every screen fills in with your own "
+        "squad — projections, captain picks, transfers, mini-league.</p>"
+        "<p>Before each deadline we'll send one short briefing: your captain, "
+        "the transfer worth making (or a clear call to roll), and anything in "
+        "your squad that has become a problem.</p>"
+        f'<p style="font-size:13px;color:#6b7280">Prefer not to get those? '
+        f'One switch turns them off: <a href="{account_url}">your account '
+        "settings</a>.</p>"
+        '<p style="font-size:12px;color:#6b7280;border-top:1px solid #e6e8ec;'
+        'padding-top:12px">Projections are estimates, not guarantees. Check '
+        "team news before the deadline.</p></div>"
+    )
+    delivery = mailer.send(
+        to=email, subject="Welcome to FPL Companion", text=text, html=html
+    )
+    if not delivery.sent:
+        print(f"[welcome] not sent to {email}: {delivery.reason}", flush=True)
 
 
 def _reset_email(token: str, email: str) -> tuple[str, str]:
@@ -1084,6 +1137,10 @@ def auth_me():
             "fpl": link,
             "fpl_connected": accounts.has_cookie(user["id"]),
             "methods": accounts.login_methods(user["id"]),
+            # Carried here rather than only on the digest preview, which cannot
+            # be built before the season starts — the toggle needs a source of
+            # truth that exists all year.
+            "deadline_email": accounts.wants_deadline_email(user["id"]),
         }
     )
 

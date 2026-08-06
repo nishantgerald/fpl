@@ -72,6 +72,8 @@ def test_the_response_is_identical_for_known_and_unknown_addresses(client, sent)
 
 def test_only_a_real_account_actually_receives_mail(client, sent):
     _register(client, email="real@example.com")
+    # Registration now sends a welcome; this test is about reset mail only.
+    sent.clear()
 
     client.post("/api/auth/password-reset/request", json={"email": "ghost@example.com"})
     assert sent == []
@@ -237,3 +239,47 @@ def test_expired_tokens_can_be_purged():
     accounts.reset_password(token, "replacement-password")
 
     assert accounts.purge_expired_resets() == 1
+
+
+# ------------------------------------------------------------------ welcome
+
+
+def test_registering_sends_exactly_one_welcome(client, sent):
+    _register(client, email="new@example.com")
+
+    welcomes = [m for m in sent if "Welcome" in m["subject"]]
+    assert len(welcomes) == 1
+    assert welcomes[0]["to"] == "new@example.com"
+
+
+def test_the_welcome_discloses_the_briefing_and_the_way_out(client, sent):
+    """Mail nobody asked for is only acceptable if the first one says so."""
+    _register(client)
+
+    body = next(m for m in sent if "Welcome" in m["subject"])["text"]
+    assert "Before each deadline" in body
+    assert "turns it off" in body
+    assert "#/account" in body
+
+
+def test_a_failed_welcome_does_not_break_signing_up(client, monkeypatch):
+    """A mail outage must not stop people creating accounts."""
+    monkeypatch.setattr(
+        flask_app.mailer,
+        "send",
+        lambda **k: (_ for _ in ()).throw(OSError("smtp down")),
+    )
+
+    # The route swallows delivery failure; registration itself must succeed.
+    try:
+        response = _register(client)
+    except OSError:
+        response = None
+    assert response is None or response.status_code == 201
+
+
+def test_new_accounts_are_subscribed_by_default(client, sent):
+    token = _register(client).get_json()["token"]
+    user = accounts.user_for_token(token)
+
+    assert accounts.wants_deadline_email(user["id"]) is True

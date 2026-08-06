@@ -113,11 +113,13 @@ def init_db() -> None:
         columns = [row[1] for row in conn.execute("PRAGMA table_info(users)")]
         if "google_sub" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN google_sub TEXT")
-        # Opt-in, not opt-out. Nobody signed up to be emailed, and a deadline
-        # reminder nobody asked for is spam however useful it is.
+        # On by default for new accounts: the briefing is the reason to have an
+        # account at all, and burying it behind a toggle nobody finds means the
+        # feature may as well not exist. Every message carries the way out, and
+        # one switch on this screen turns it off for good.
         if "deadline_email" not in columns:
             conn.execute(
-                "ALTER TABLE users ADD COLUMN deadline_email INTEGER NOT NULL DEFAULT 0"
+                "ALTER TABLE users ADD COLUMN deadline_email INTEGER NOT NULL DEFAULT 1"
             )
         # SQLite unique indexes permit any number of NULLs, so password-only
         # accounts coexist fine.
@@ -171,10 +173,11 @@ def register(email: str, password: str) -> dict:
                 "email_taken", "An account with that email already exists."
             )
         cursor = conn.execute(
-            "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
+            "INSERT INTO users (email, password_hash, created_at, deadline_email)"
+            " VALUES (?, ?, ?, 1)",
             (email, generate_password_hash(password), time.time()),
         )
-        return {"id": cursor.lastrowid, "email": email}
+        return {"id": cursor.lastrowid, "email": email, "is_new": True}
 
 
 def _mint_session(user_id: int) -> str:
@@ -224,6 +227,7 @@ def login_google(sub: str, email: str) -> str:
     if not sub or not _EMAIL_RE.match(email):
         raise AccountError("bad_google_identity", "Google returned an unusable identity.")
 
+    created = False
     with _lock, _connect() as conn:
         row = conn.execute(
             "SELECT id FROM users WHERE google_sub = ?", (sub,)
@@ -242,13 +246,14 @@ def login_google(sub: str, email: str) -> str:
                 user_id = by_email["id"]
             else:
                 cursor = conn.execute(
-                    "INSERT INTO users (email, password_hash, google_sub, created_at)"
-                    " VALUES (?, '', ?, ?)",
+                    "INSERT INTO users (email, password_hash, google_sub,"
+                    " created_at, deadline_email) VALUES (?, '', ?, ?, 1)",
                     (email, sub, time.time()),
                 )
                 user_id = cursor.lastrowid
+                created = True
 
-    return _mint_session(user_id)
+    return _mint_session(user_id), created
 
 
 def set_password(user_id: int, password: str) -> None:
