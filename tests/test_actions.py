@@ -175,3 +175,79 @@ def test_no_saved_squad_is_none_not_an_empty_shell(tmp_path, monkeypatch):
     user = accounts.register("c@d.com", "correct horse battery")
 
     assert accounts.saved_squad(user["id"]) is None
+
+
+def test_the_preview_fallback_keeps_squad_level_advice(monkeypatch):
+    """A preview exists so the feature can be judged before kickoff.
+
+    Stripping it back to buy targets, the way a genuinely unreadable squad is
+    stripped, would leave the preview showing exactly what it was meant to
+    demonstrate isn't all there is.
+    """
+    monkeypatch.setattr(service.fpl_client, "bootstrap", lambda: _elements([1, 2]))
+    monkeypatch.setattr(
+        service,
+        "draft_squad",
+        lambda horizon=5: {"squad": [{"id": 1}, {"id": 2}], "bench": [{"id": 2}]},
+    )
+
+    squad, picks, reason = service._squad_for_advice(
+        1, gameweek=1, started=False, cookie=None
+    )
+
+    assert reason == "preview_draft"
+    assert [p["id"] for p in squad] == [1, 2]
+    assert {p["element"] for p in picks if p["multiplier"] == 0} == {2}
+
+
+def test_a_saved_squad_beats_the_preview(monkeypatch):
+    """Their own squad, however it arrived, always outranks our suggestion."""
+    monkeypatch.setattr(service.fpl_client, "bootstrap", lambda: _elements([1, 2, 3]))
+    monkeypatch.setattr(
+        service, "draft_squad", lambda horizon=5: pytest.fail("preview preferred")
+    )
+
+    squad, _, reason = service._squad_for_advice(
+        1, gameweek=1, started=False, cookie=None, saved={"element_ids": [3]}
+    )
+
+    assert reason is None
+    assert [p["id"] for p in squad] == [3]
+
+
+def test_a_failed_draft_degrades_to_saying_nothing_is_visible(monkeypatch):
+    """The preview is a nicety. It must never turn into the error itself."""
+    monkeypatch.setattr(service.fpl_client, "bootstrap", lambda: _elements([1]))
+
+    def _broken(horizon=5):
+        raise RuntimeError("optimiser unavailable")
+
+    monkeypatch.setattr(service, "draft_squad", _broken)
+
+    squad, _, reason = service._squad_for_advice(
+        1, gameweek=1, started=False, cookie=None
+    )
+
+    assert squad == []
+    assert reason == "no_cookie"
+
+
+def test_the_preview_never_fires_once_the_season_is_under_way(monkeypatch):
+    """In-season a missing squad means a bad entry id, and inventing one would
+    hide that behind advice about players they do not own."""
+    monkeypatch.setattr(service.fpl_client, "bootstrap", lambda: _elements([1]))
+    monkeypatch.setattr(
+        service, "load_squad_state", lambda e, g: (_ for _ in ()).throw(
+            service.ServiceError("entry_not_found", "gone", status=404)
+        )
+    )
+    monkeypatch.setattr(
+        service, "draft_squad", lambda horizon=5: pytest.fail("previewed in-season")
+    )
+
+    squad, _, reason = service._squad_for_advice(
+        1, gameweek=7, started=True, cookie=None
+    )
+
+    assert squad == []
+    assert reason == "entry_not_found"

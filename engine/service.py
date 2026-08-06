@@ -104,6 +104,30 @@ def _squad_for_advice(
                 for e in squad
             ]
             return squad, picks, None
+
+        # Nothing to advise on. Rather than a screen that only ever says so,
+        # fall back to the squad we would build ourselves — every item is then
+        # a real worked example the user can judge the feature by. It is
+        # flagged as a preview, and the caller must label it as one: advice
+        # about a squad someone does not own is a demo, not a recommendation.
+        if not started:
+            try:
+                draft = draft_squad(horizon=DEFAULT_HORIZON) or {}
+                bench = {int(p["id"]) for p in draft.get("bench") or []}
+                ids = [int(p["id"]) for p in draft.get("squad") or []]
+                squad = [elements[i] for i in ids if i in elements]
+                if squad:
+                    picks = [
+                        {
+                            "element": int(e["id"]),
+                            "multiplier": 0 if int(e["id"]) in bench else 1,
+                        }
+                        for e in squad
+                    ]
+                    return squad, picks, "preview_draft"
+            except Exception:
+                pass
+
         return [], [], "no_cookie" if not started else "entry_not_found"
 
     picks = list(payload.get("picks") or [])
@@ -298,7 +322,7 @@ def actions_for(
 
     # Advice about a squad we could not read is advice about nobody. Ranking a
     # buy target above an injury we never saw would be worse than saying so.
-    if unavailable:
+    if unavailable and unavailable != "preview_draft":
         items = [i for i in items if i["priority"] >= 4]
 
     return {
