@@ -34,6 +34,23 @@ def _never_touch_real_llm_state(monkeypatch, tmp_path):
     narrative.clear_cache()
 
 
+@pytest.fixture(autouse=True)
+def _never_touch_a_real_database(monkeypatch):
+    """Keep every test off whatever `DATABASE_URL` points at.
+
+    The account tests isolate themselves by pointing `accounts.DB_PATH` at a
+    tmp_path — which stopped being sufficient the moment storage could be
+    Postgres, because `DB_PATH` is then ignored entirely. Without this,
+    `DATABASE_URL=... pytest` would run the whole suite against the live
+    database: registering users, minting sessions and deleting rows in
+    production, while looking like an ordinary green test run.
+
+    `tests/test_db.py` opts back in by setting the variable itself, so the
+    integration tests still reach a real server on purpose.
+    """
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+
 TEAM_IDS = list(range(1, 21))
 
 
