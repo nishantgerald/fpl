@@ -410,6 +410,7 @@ def buy_shortlists(
     horizon: int,
     per_list: int = 3,
     teams: Mapping[int, Mapping] | None = None,
+    bench_ids: set[int] | None = None,
 ) -> list[dict]:
     """Four ranked shortlists, each answering a different question.
 
@@ -421,7 +422,7 @@ def buy_shortlists(
     and the net gain, because a transfer is a swap and a name on its own leaves
     the decision undone.
     """
-    weakest = _weakest_by_position(squad, projections)
+    weakest = _weakest_by_position(squad, projections, bench_ids)
 
     candidates: list[dict] = []
     for element in elements.values():
@@ -541,15 +542,29 @@ def _rank(
 
 
 def _weakest_by_position(
-    squad: Sequence[Mapping], projections: Mapping
+    squad: Sequence[Mapping],
+    projections: Mapping,
+    bench_ids: set[int] | None = None,
 ) -> dict[str, dict]:
     """The player in each position this manager would actually drop.
 
     The realistic transfer is out-the-worst rather than out-the-best, so this is
     what an incoming player has to beat for the gain to be honest.
+
+    **The bench is excluded**, and that correction mattered: a squad's weakest
+    player is almost always its £4.0m backup goalkeeper, who exists precisely to
+    not play. Measured against him every keeper in the league is a twelve-point
+    upgrade, and production duly filled three of four shortlists with
+    goalkeepers. Nobody upgrades their backup keeper; the transfer a manager
+    actually makes is out of the eleven that score.
     """
+    playing = [
+        p for p in squad if int(p.get("id", 0)) not in (bench_ids or set())
+    ]
+    # A squad with no bench information is better served by the old comparison
+    # than by no comparison at all.
     weakest: dict[str, dict] = {}
-    for player in squad:
+    for player in playing or squad:
         position = _position(player) or str(player.get("position") or "")
         if not position:
             continue

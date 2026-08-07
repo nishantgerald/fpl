@@ -246,6 +246,7 @@ def actions_for(
         squad,
         horizon,
         teams=teams,
+        bench_ids=bench_ids,
     )
 
     # 4. Chips, valued against this squad rather than in the abstract.

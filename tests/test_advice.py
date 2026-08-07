@@ -313,6 +313,57 @@ def test_the_value_list_does_not_return_three_goalkeepers():
     assert "GKP" in positions and "DEF" in positions and "MID" in positions
 
 
+def test_the_backup_goalkeeper_is_not_who_a_transfer_replaces():
+    """Caught in production: three of four shortlists were goalkeepers.
+
+    A squad's weakest player is almost always its £4.0m backup keeper, who
+    exists in order not to play. Measured against him every keeper in the
+    league is a twelve-point upgrade — arithmetically true and not a transfer
+    anyone makes.
+    """
+    elements = {
+        1: _element(1, "AnyKeeper", position=1, price=5.0),
+        2: _element(2, "Mid", position=3, price=7.0),
+    }
+    projections = {1: _projection(17.0), 2: _projection(30.0)}
+
+    starting_keeper = _element(9, "Starter", position=1, price=5.5, team=1)
+    backup_keeper = _element(10, "Backup", position=1, price=4.0, team=1)
+    starting_mid = _element(11, "OwnMid", position=3, price=6.0, team=1)
+    projections.update({9: _projection(16.5), 10: _projection(4.0), 11: _projection(12.0)})
+
+    lists = advice.buy_shortlists(
+        elements,
+        projections,
+        {},
+        {9, 10, 11},
+        [starting_keeper, backup_keeper, starting_mid],
+        horizon=5,
+        teams=TEAMS,
+        bench_ids={10},
+    )
+
+    named = {p["player"] for group in lists for p in group["players"]}
+    # AnyKeeper beats the backup by 13 and the starter by 0.5. Only the second
+    # comparison is a transfer.
+    assert "AnyKeeper" not in named
+    assert "Mid" in named
+
+
+def test_without_bench_information_the_old_comparison_still_applies():
+    """A screenshot import knows the fifteen but not always the eleven. Some
+    comparison beats none."""
+    elements = {1: _element(1, "Better", position=3, price=7.0)}
+    projections = {1: _projection(30.0), 9: _projection(10.0)}
+    owned = _element(9, "Weak", position=3, price=6.5, team=1)
+
+    lists = advice.buy_shortlists(
+        elements, projections, {}, {9}, [owned], horizon=5, teams=TEAMS
+    )
+
+    assert "Better" in {p["player"] for g in lists for p in g["players"]}
+
+
 def test_a_target_that_would_downgrade_the_squad_is_not_worth_buying():
     """Caught in production: 'Worth buying' listed a swap that lost 3.3 points.
 
