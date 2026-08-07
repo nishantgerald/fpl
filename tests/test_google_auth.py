@@ -15,7 +15,7 @@ import pytest
 import requests
 
 import app as flask_app
-from engine import accounts
+from engine import accounts, llm_budget
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +23,9 @@ def _fresh_db(monkeypatch, tmp_path):
     monkeypatch.setattr(accounts, "DB_PATH", tmp_path / "app.db")
     monkeypatch.setattr(accounts, "KEY_PATH", tmp_path / "vault.key")
     accounts.init_db()
-    flask_app._auth_attempts.clear()
+    # The throttle windows moved into llm_budget so they are shared across
+    # gunicorn workers; this is the store now.
+    llm_budget._local_windows.clear()
 
 
 @pytest.fixture

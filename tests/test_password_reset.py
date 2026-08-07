@@ -12,7 +12,7 @@ import time
 import pytest
 
 import app as flask_app
-from engine import accounts, mailer
+from engine import accounts, mailer, llm_budget
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +20,9 @@ def _fresh(monkeypatch, tmp_path):
     monkeypatch.setattr(accounts, "DB_PATH", tmp_path / "app.db")
     monkeypatch.setattr(accounts, "KEY_PATH", tmp_path / "vault.key")
     accounts.init_db()
-    flask_app._auth_attempts.clear()
+    # The throttle windows moved into llm_budget so they are shared across
+    # gunicorn workers; this is the store now.
+    llm_budget._local_windows.clear()
     # No real mail in tests; delivery is asserted via the recorder below.
     monkeypatch.delenv("SMTP_HOST", raising=False)
     monkeypatch.delenv("SMTP_FROM", raising=False)

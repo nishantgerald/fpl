@@ -255,6 +255,64 @@ def check_client(client_id: str) -> None:
     _check_client_on_disk(client_id)
 
 
+def throttled(scope: str, client_id: str, limit: int, window_seconds: int) -> bool:
+    """Generic per-client rate limit, shared across workers. True = refuse.
+
+    Exists because the same mistake was made three times: the import limit and
+    the auth limit were plain dicts in process memory, so with three gunicorn
+    workers a "5 uploads per 15 minutes" cap was really fifteen, a "10 attempts"
+    cap was really thirty, and both forgot everything on every restart. A limit
+    multiplied by the worker count and reset several times a day is not a limit.
+
+    Falls back to a process-local dict when there is no database, which is
+    correct for a single-process dev server and is what the tests exercise.
+    """
+    if not client_id:
+        return False
+    key = f"{scope}:{client_id}"
+    if not db.is_postgres():
+        return _throttled_in_process(key, limit, window_seconds)
+
+    now = time.time()
+    cutoff = now - window_seconds
+    try:
+        with db.connect() as conn:
+            conn.execute("DELETE FROM llm_client_calls WHERE called_at < ?", (cutoff,))
+            row = conn.execute(
+                """
+                INSERT INTO llm_client_calls (client_id, called_at)
+                SELECT ?, ?
+                WHERE (
+                    SELECT COUNT(*) FROM llm_client_calls
+                    WHERE client_id = ? AND called_at > ?
+                ) < ?
+                RETURNING called_at
+                """,
+                (key, now, key, cutoff, limit),
+            ).fetchone()
+        return row is None
+    except Exception:
+        # A throttle that cannot reach its store must not take the route down
+        # with it. Failing open is the right direction: the daily ceiling is
+        # still behind this, and refusing every request because the database
+        # blinked is a worse outage than a brief lapse in rate limiting.
+        return False
+
+
+_local_windows: dict[str, list[float]] = {}
+
+
+def _throttled_in_process(key: str, limit: int, window_seconds: int) -> bool:
+    now = time.time()
+    window = [t for t in _local_windows.get(key, []) if now - t < window_seconds]
+    if len(window) >= limit:
+        _local_windows[key] = window
+        return True
+    window.append(now)
+    _local_windows[key] = window
+    return False
+
+
 def _check_client_shared(client_id: str) -> None:
     """The hourly throttle, in the database.
 

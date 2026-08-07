@@ -395,3 +395,47 @@ def test_a_status_read_never_raises_even_with_no_rows(pg):
         "total": 0,
         "by_kind": {},
     }
+
+
+@postgres_only
+def test_the_upload_and_auth_throttles_are_shared_too(pg, monkeypatch):
+    """The same per-worker bug, found while verifying the budget move.
+
+    _import_attempts and _auth_attempts were plain dicts in process memory, so
+    with three gunicorn workers a "5 uploads per 15 minutes" cap was really
+    fifteen and "10 auth attempts" was really thirty — and both forgot
+    everything on restart. A limit multiplied by the worker count and reset
+    several times a day is not a limit.
+    """
+    from engine import llm_budget
+
+    for _ in range(3):
+        assert llm_budget.throttled("import", "203.0.113.5", 3, 900) is False
+    assert llm_budget.throttled("import", "203.0.113.5", 3, 900) is True
+
+    # Scopes do not bleed into one another: spending the upload allowance must
+    # not lock the same visitor out of signing in.
+    assert llm_budget.throttled("auth", "203.0.113.5", 3, 900) is False
+    # Nor does one caller's limit touch another's.
+    assert llm_budget.throttled("import", "203.0.113.6", 3, 900) is False
+
+
+@postgres_only
+def test_a_throttle_fails_open_when_the_store_is_unreachable(pg):
+    """Refusing every request because the database blinked is a worse outage
+    than a brief lapse in rate limiting — and the daily ceiling is still
+    behind it."""
+    from engine import llm_budget
+
+    def explode(*args, **kwargs):
+        raise OSError("database is down")
+
+    # Patched by hand rather than with monkeypatch: the pg fixture's teardown
+    # needs a working connection, and a monkeypatch that outlives the assertion
+    # takes the teardown down with it.
+    original = llm_budget.db.connect
+    llm_budget.db.connect = explode
+    try:
+        assert llm_budget.throttled("import", "203.0.113.7", 1, 900) is False
+    finally:
+        llm_budget.db.connect = original

@@ -10,7 +10,7 @@ import pytest
 import requests
 
 import app as flask_app
-from engine import accounts, fpl_client
+from engine import accounts, fpl_client, llm_budget
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +21,9 @@ def _fresh_db(monkeypatch, tmp_path):
     accounts.init_db()
     # Auth throttling is per-process state; a full window from one test must
     # not lock the next one out.
-    flask_app._auth_attempts.clear()
+    # The throttle windows moved into llm_budget so they are shared across
+    # gunicorn workers; this is the store now.
+    llm_budget._local_windows.clear()
     fpl_client.clear_caches()
     yield
     fpl_client.clear_caches()

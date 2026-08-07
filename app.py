@@ -147,20 +147,16 @@ def _client_id() -> str:
 # progress resets with it.
 _AUTH_ATTEMPT_LIMIT = int(os.getenv("AUTH_ATTEMPTS_PER_WINDOW", 10))
 _AUTH_WINDOW_SECONDS = int(os.getenv("AUTH_WINDOW_SECONDS", 900))
-_auth_attempts: dict[str, list[float]] = {}
-
-
 def _auth_throttled(client: str) -> bool:
-    import time as _time
+    """Brute-force protection on sign-in, registration and password reset.
 
-    now = _time.time()
-    window = [t for t in _auth_attempts.get(client, []) if now - t < _AUTH_WINDOW_SECONDS]
-    if len(window) >= _AUTH_ATTEMPT_LIMIT:
-        _auth_attempts[client] = window
-        return True
-    window.append(now)
-    _auth_attempts[client] = window
-    return False
+    Same reasoning as the import limit: per-process it was ten attempts per
+    worker, so thirty, and reset on every restart — which is most of a day's
+    worth of guesses handed back for free.
+    """
+    return llm_budget.throttled(
+        "auth", client, _AUTH_ATTEMPT_LIMIT, _AUTH_WINDOW_SECONDS
+    )
 
 
 @app.errorhandler(fcps_llm.FcpsUnavailable)
@@ -1403,20 +1399,13 @@ def _handle_import_error(error):
 # point of the feature is that a stranger can use it without signing up.
 _IMPORT_LIMIT = int(os.getenv("IMPORT_ATTEMPTS_PER_WINDOW", 5))
 _IMPORT_WINDOW_SECONDS = int(os.getenv("IMPORT_WINDOW_SECONDS", 900))
-_import_attempts: dict[str, list[float]] = {}
-
-
 def _import_throttled(client: str) -> bool:
-    now = time.time()
-    window = [
-        t for t in _import_attempts.get(client, []) if now - t < _IMPORT_WINDOW_SECONDS
-    ]
-    if len(window) >= _IMPORT_LIMIT:
-        _import_attempts[client] = window
-        return True
-    window.append(now)
-    _import_attempts[client] = window
-    return False
+    # Shared across workers rather than held in this process: three gunicorn
+    # workers each keeping their own dict made a five-per-window cap really
+    # fifteen, and a restart forgot it entirely.
+    return llm_budget.throttled(
+        "import", client, _IMPORT_LIMIT, _IMPORT_WINDOW_SECONDS
+    )
 
 
 @app.route("/api/import/screenshot", methods=["POST"])
