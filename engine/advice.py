@@ -401,6 +401,18 @@ SHORTLISTS = (
 )
 
 
+#: Why a list has nobody on it *before* any comparison to the squad. Distinct
+#: from being filtered out: form is empty in pre-season because no matches have
+#: been played, which is not the same as nobody being an upgrade.
+EMPTY_NO_CANDIDATES = {
+    "form": "Nobody has a form rating yet — it is scored over the last 30 days, "
+    "so it fills in once matches have been played.",
+    "fixtures": "No club's run changes character over the next few gameweeks.",
+    "differential": "Nobody under 8% ownership projects well enough right now.",
+    "value": "Nothing clears the points floor at a price worth calling value.",
+}
+
+
 def buy_shortlists(
     elements: Mapping[int, Mapping],
     projections: Mapping,
@@ -464,7 +476,8 @@ def buy_shortlists(
 
     lists: list[dict] = []
     for key, title, subtitle in SHORTLISTS:
-        picked = _rank(key, candidates, swings)
+        matched = _rank(key, candidates, swings)
+        picked = matched
         if know_the_squad:
             picked = [
                 p for p in picked if (p.get("gain") or 0) >= MIN_TRANSFER_GAIN
@@ -472,9 +485,10 @@ def buy_shortlists(
             picked.sort(key=lambda p: -p["gain"])
         picked = picked[:per_list]
         if not picked:
-            # An empty list is worth saying out loud once the squad is known:
-            # "nothing here improves your fifteen" is a real answer, and better
-            # than three names that would make it worse.
+            # An empty list is worth saying out loud once the squad is known —
+            # but only with the right reason. "Nothing here improves your squad"
+            # over an empty form list before a ball is kicked is a wrong
+            # explanation, which is worse than no explanation.
             if know_the_squad:
                 lists.append(
                     {
@@ -482,7 +496,11 @@ def buy_shortlists(
                         "title": title,
                         "subtitle": subtitle,
                         "players": [],
-                        "empty_reason": "Nothing here improves your squad.",
+                        "empty_reason": EMPTY_NO_CANDIDATES.get(
+                            key, "Nothing matches this right now."
+                        )
+                        if not matched
+                        else "Nothing here improves your squad.",
                     }
                 )
             continue

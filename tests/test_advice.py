@@ -392,6 +392,46 @@ def test_a_target_that_would_downgrade_the_squad_is_not_worth_buying():
             assert player["gain"] >= advice.MIN_TRANSFER_GAIN
 
 
+def test_an_empty_list_gives_the_right_reason_for_being_empty():
+    """Pre-season, "In form" is empty because nobody has a form rating yet —
+    not because nothing improves the squad. A wrong explanation is worse than
+    no explanation, and this one shipped."""
+    elements, projections = _buy_pool()
+    owned = _element(9, "Weak", position=3, price=6.0, team=1)
+    projections[9] = _projection(10.0)
+    # Nobody has played, so every form is 0.0 — the pre-season state.
+    elements = {i: {**e, "form": "0.0"} for i, e in elements.items()}
+
+    lists = advice.buy_shortlists(
+        elements, projections, {}, {9}, [owned], horizon=5, teams=TEAMS
+    )
+    form = next(g for g in lists if g["key"] == "form")
+
+    assert form["players"] == []
+    assert "form rating yet" in form["empty_reason"]
+    assert "improves your squad" not in form["empty_reason"]
+
+
+def test_a_list_emptied_by_the_gain_filter_says_that_instead():
+    elements, projections = _buy_pool()
+    # Hot has form 7.5 so he reaches the list, but the squad already has better
+    # in midfield. The defence is weak, so the value list still has somebody —
+    # without that the squad has no upgrades at all and collapses to one line,
+    # which is a different behaviour and not the one under test.
+    strong = _element(9, "Stronger", position=3, price=8.0, team=1)
+    thin = _element(10, "Thin", position=2, price=4.0, team=1)
+    projections[9] = _projection(60.0)
+    projections[10] = _projection(5.0)
+
+    lists = advice.buy_shortlists(
+        elements, projections, {}, {9, 10}, [strong, thin], horizon=5, teams=TEAMS
+    )
+    form = next(g for g in lists if g["key"] == "form")
+
+    assert form["players"] == []
+    assert form["empty_reason"] == "Nothing here improves your squad."
+
+
 def test_a_squad_with_no_upgrades_is_told_so_rather_than_shown_four_tabs():
     elements, projections = _buy_pool()
     unbeatable = _element(9, "Star", position=3, price=8.0, team=1)
