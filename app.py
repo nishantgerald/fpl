@@ -1918,36 +1918,14 @@ def _global_captain_ranking(limit: int):
     teams = {int(t["id"]): t.get("short_name", "UNK") for t in data.get("teams", [])}
     elements = {int(e["id"]): e for e in data.get("elements", [])}
 
-    ranked = []
-    for pid, projection in projections.items():
-        element = elements.get(pid)
-        if element is None:
-            continue
-        xpts_next = float(projection.get("xpts_next") or 0.0)
-        if xpts_next <= 0:
-            continue
-        # A blank gameweek cannot be captained; an unavailable player should not
-        # be suggested for the one pick that doubles.
-        fixtures = (projection.get("per_gameweek") or [{}])[0].get("fixtures") or []
-        if not fixtures:
-            continue
-        ranked.append(
-            {
-                "id": pid,
-                "web_name": element.get("web_name", ""),
-                "team": teams.get(int(element.get("team", 0)), "UNK"),
-                "position": rules.position_of(element),
-                "price": int(element.get("now_cost", 0)) / 10,
-                "fixtures": fixtures,
-                "xpts": round(xpts_next, 2),
-                "xpts_captained": round(xpts_next * 2, 2),
-                "minutes_risk": projection.get("minutes_risk", "medium"),
-                "selected_by_percent": _safe_float(element.get("selected_by_percent")),
-            }
-        )
-
-    ranked.sort(key=lambda r: (-r["xpts"], r["id"]))
-    return ranked[:limit]
+    return captain_engine.rank_global(
+        projections,
+        elements,
+        teams,
+        rules.position_of,
+        lambda e: int(e.get("now_cost", 0)) / 10,
+        limit,
+    )
 
 
 @app.route("/api/captain")

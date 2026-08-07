@@ -31,6 +31,124 @@ NOTABLE_GAP = 2.0
 CEILING_COMPONENTS = ("goals", "assists", "bonus")
 
 
+def score_candidate(
+    *,
+    player_id: int,
+    web_name: str,
+    name: str,
+    team: str,
+    position: str,
+    xpts_next: float,
+    components: Mapping,
+    fixtures: Sequence[Mapping],
+    ownership: float,
+    availability: float,
+    minutes_risk: str,
+) -> dict:
+    """One armband candidate, scored the way this module argues for.
+
+    Shared so that every list of captain candidates is the same list. The public
+    ranking used to sort on plain ``xpts_next`` and publish it doubled, which is
+    a different answer to a different question: doubling is monotonic, so it
+    changes no order and adds no information, and ranking on the mean is exactly
+    the thing the module docstring says captaincy is not.
+    """
+    ceiling = sum(float(components.get(k, 0.0)) for k in CEILING_COMPONENTS)
+    return {
+        "id": player_id,
+        "name": name,
+        "web_name": web_name,
+        "team": team,
+        "position": position,
+        "xpts": round(xpts_next, 2),
+        # What the armband is actually worth. Kept because it answers "what do
+        # I get", but never sorted on: doubling every number changes no order,
+        # so a list ranked by it is a list ranked by plain xPts wearing a
+        # bigger figure.
+        "xpts_captained": round(xpts_next * 2, 2),
+        "captain_score": round(xpts_next + CEILING_TILT * ceiling, 2),
+        "ceiling": _ceiling_band(ceiling, xpts_next),
+        "opponent": _opponent_str(fixtures),
+        "fdr": fixtures[0]["fdr"] if fixtures else None,
+        "blanking": not fixtures,
+        "ownership": float(ownership or 0.0),
+        "availability": availability,
+        "minutes_risk": minutes_risk,
+    }
+
+
+def order_candidates(
+    entries: list[dict], most_captained: int | None = None
+) -> list[dict]:
+    """Sort, rank and annotate in place.
+
+    Blanking or unavailable players can never top the list, whatever their
+    underlying numbers say.
+    """
+    entries.sort(
+        key=lambda e: (
+            e["blanking"] or e["availability"] <= 0.0,
+            -e["captain_score"],
+            e["id"],
+        )
+    )
+    for rank, entry in enumerate(entries, start=1):
+        entry["rank"] = rank
+        entry["safety"] = _safety(entry, most_captained)
+        entry["note"] = _note(entry)
+    return entries
+
+
+def rank_global(
+    projections: Mapping[int, Mapping],
+    elements: Mapping[int, Mapping],
+    teams: Mapping[int, str],
+    position_of,
+    price_of,
+    limit: int,
+    most_captained: int | None = None,
+) -> list[dict]:
+    """The whole league ranked for the armband, for a visitor with no squad.
+
+    Same scoring as the squad-scoped ranking. A public page that ordered players
+    differently from the signed-in one would be recommending two captains for
+    one gameweek and calling both of them best.
+    """
+    entries: list[dict] = []
+    for player_id, projection in projections.items():
+        element = elements.get(player_id)
+        if element is None:
+            continue
+        xpts_next = float(projection.get("xpts_next") or 0.0)
+        if xpts_next <= 0:
+            continue
+        first = (projection.get("per_gameweek") or [{}])[0]
+        fixtures = first.get("fixtures") or []
+        # A blank gameweek cannot be captained at all, so it is excluded here
+        # rather than merely sunk: on a public list there is no squad forcing
+        # the choice, and a name nobody can pick is not a candidate.
+        if not fixtures:
+            continue
+        entries.append(
+            score_candidate(
+                player_id=player_id,
+                web_name=element.get("web_name", ""),
+                name=_name(element),
+                team=teams.get(int(element.get("team", 0)), "UNK"),
+                position=position_of(element),
+                xpts_next=xpts_next,
+                components=first.get("components") or {},
+                fixtures=fixtures,
+                ownership=element.get("selected_by_percent") or 0.0,
+                availability=projection.get("availability", 1.0),
+                minutes_risk=projection.get("minutes_risk", "medium"),
+            )
+            | {"price": price_of(element), "fixtures": fixtures}
+        )
+
+    return order_candidates(entries, most_captained)[:limit]
+
+
 def rank_captains(
     squad: Sequence[Mapping],
     picks: Sequence[Mapping],
@@ -51,44 +169,23 @@ def rank_captains(
         if not proj:
             continue
         gw_entry = _gameweek_entry(proj, gameweek)
-        xpts_next = float(gw_entry.get("xpts", 0.0)) if gw_entry else 0.0
-        components = (gw_entry or {}).get("components", {})
-        ceiling = sum(float(components.get(k, 0.0)) for k in CEILING_COMPONENTS)
-
-        fixtures = (gw_entry or {}).get("fixtures", [])
         entries.append(
-            {
-                "id": pid,
-                "name": _name(player),
-                "web_name": player.get("web_name", ""),
-                "team": _team_short(teams, player.get("team")),
-                "position": rules.position_of(player),
-                "xpts": round(xpts_next, 2),
-                "captain_score": round(xpts_next + CEILING_TILT * ceiling, 2),
-                "ceiling": _ceiling_band(ceiling, xpts_next),
-                "opponent": _opponent_str(fixtures),
-                "fdr": fixtures[0]["fdr"] if fixtures else None,
-                "blanking": not fixtures,
-                "ownership": float(player.get("selected_by_percent") or 0.0),
-                "availability": proj.get("availability", 1.0),
-                "minutes_risk": proj.get("minutes_risk", "medium"),
-            }
+            score_candidate(
+                player_id=pid,
+                web_name=player.get("web_name", ""),
+                name=_name(player),
+                team=_team_short(teams, player.get("team")),
+                position=rules.position_of(player),
+                xpts_next=float(gw_entry.get("xpts", 0.0)) if gw_entry else 0.0,
+                components=(gw_entry or {}).get("components", {}),
+                fixtures=(gw_entry or {}).get("fixtures", []),
+                ownership=player.get("selected_by_percent") or 0.0,
+                availability=proj.get("availability", 1.0),
+                minutes_risk=proj.get("minutes_risk", "medium"),
+            )
         )
 
-    # Blanking or unavailable players can never top the list, whatever their
-    # underlying numbers say.
-    entries.sort(
-        key=lambda e: (
-            e["blanking"] or e["availability"] <= 0.0,
-            -e["captain_score"],
-            e["id"],
-        )
-    )
-    for rank, entry in enumerate(entries, start=1):
-        entry["rank"] = rank
-        entry["safety"] = _safety(entry, most_captained)
-        entry["note"] = _note(entry)
-
+    order_candidates(entries, most_captained)
     by_id = {e["id"]: e for e in entries}
     return {
         "gameweek": gameweek,
