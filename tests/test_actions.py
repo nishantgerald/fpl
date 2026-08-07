@@ -10,7 +10,9 @@ a full answer.
 
 import pytest
 
-from engine import accounts, chips, service
+from types import SimpleNamespace
+
+from engine import accounts, chips, draft, service
 
 
 BOOTSTRAP_CHIPS = [
@@ -188,7 +190,14 @@ def test_the_preview_fallback_keeps_squad_level_advice(monkeypatch):
     monkeypatch.setattr(
         service,
         "draft_squad",
-        lambda horizon=5: {"squad": [{"id": 1}, {"id": 2}], "bench": [{"id": 2}]},
+        # **kwargs, so a stub cannot silently stop matching the real signature.
+        # The call site swallows every exception, so a stub that rejects a new
+        # argument does not fail loudly — it falls through to "no_cookie" and
+        # the preview quietly disappears.
+        lambda horizon=5, **kwargs: {
+            "squad": [{"id": 1}, {"id": 2}],
+            "bench": [{"id": 2}],
+        },
     )
 
     squad, picks, reason = service._squad_for_advice(
@@ -204,7 +213,7 @@ def test_a_saved_squad_beats_the_preview(monkeypatch):
     """Their own squad, however it arrived, always outranks our suggestion."""
     monkeypatch.setattr(service.fpl_client, "bootstrap", lambda: _elements([1, 2, 3]))
     monkeypatch.setattr(
-        service, "draft_squad", lambda horizon=5: pytest.fail("preview preferred")
+        service, "draft_squad", lambda horizon=5, **kwargs: pytest.fail("preview preferred")
     )
 
     squad, _, reason = service._squad_for_advice(
@@ -242,7 +251,7 @@ def test_the_preview_never_fires_once_the_season_is_under_way(monkeypatch):
         )
     )
     monkeypatch.setattr(
-        service, "draft_squad", lambda horizon=5: pytest.fail("previewed in-season")
+        service, "draft_squad", lambda horizon=5, **kwargs: pytest.fail("previewed in-season")
     )
 
     squad, _, reason = service._squad_for_advice(
@@ -301,8 +310,75 @@ def test_without_refresh_the_cache_still_answers(monkeypatch):
         "projections_for",
         lambda h, e: pytest.fail("recomputed despite a warm cache"),
     )
+    monkeypatch.setattr(service, "_draft_summary", lambda built: {"available": True})
 
-    assert service.draft_squad(horizon=5) == {"squad": [{"id": 1}]}
+    assert service.draft_squad(horizon=5)["squad"] == [{"id": 1}]
+    service._draft_cache.clear()
+
+
+def test_a_caller_that_only_wants_the_number_does_not_wait_for_the_prose(
+    monkeypatch,
+):
+    """The Actions page read one figure off the draft — the best legal squad's
+    expected points, to measure a wildcard against — and paid a twelve-second
+    LLM call for a paragraph it discarded. The page sat blank for those twelve
+    seconds behind words nobody would ever see."""
+    service._draft_cache.clear()
+    monkeypatch.setattr(
+        service.fpl_client,
+        "season_state",
+        lambda: {"started": False, "gameweek": 1, "gameweek_name": "GW1", "deadline": "x"},
+    )
+    monkeypatch.setattr(
+        service,
+        "_draft_summary",
+        lambda built: pytest.fail("wrote prose for a caller that asked for none"),
+    )
+    monkeypatch.setattr(
+        service,
+        "projections_for",
+        lambda h, e: SimpleNamespace(
+            data={"elements": [], "teams": []},
+            projections={},
+            engine="xpts",
+            engine_requested="xpts",
+        ),
+    )
+    monkeypatch.setattr(draft, "candidates", lambda *a, **k: [{"id": 1}])
+    monkeypatch.setattr(draft, "build", lambda *a, **k: {"squad": [{"id": 1}]})
+
+    built = service.draft_squad(horizon=5, with_summary=False)
+
+    assert "summary" not in built
+    assert built["squad"]
+    service._draft_cache.clear()
+
+
+def test_prose_is_written_later_without_running_the_solver_again(monkeypatch):
+    """The cheap half is the words; the expensive half is the search. A squad
+    cached without prose must still answer someone who wants prose, or the
+    saving is paid back with interest the first time the draft page opens."""
+    service._draft_cache.clear()
+    service._draft_cache["5:xpts:max_points:"] = (9e18, {"squad": [{"id": 1}]})
+    monkeypatch.setattr(
+        service.fpl_client,
+        "season_state",
+        lambda: {"started": False, "gameweek": 1, "gameweek_name": "GW1", "deadline": "x"},
+    )
+    monkeypatch.setattr(
+        service,
+        "projections_for",
+        lambda h, e: pytest.fail("re-ran the optimiser to write a paragraph"),
+    )
+    monkeypatch.setattr(
+        service, "_draft_summary", lambda built: {"available": True, "text": "words"}
+    )
+
+    built = service.draft_squad(horizon=5)
+
+    assert built["summary"] == {"available": True, "text": "words"}
+    # And it sticks, so the next reader does not pay for it either.
+    assert service._draft_cache["5:xpts:max_points:"][1]["summary"]["text"] == "words"
     service._draft_cache.clear()
 
 
@@ -374,3 +450,23 @@ def test_the_preview_squad_does_not_silence_the_buy_shortlists(monkeypatch):
 
     assert seen["squad"] == []
     assert seen["bench_ids"] is None
+
+def test_the_actions_page_never_waits_on_prose(monkeypatch):
+    """The guard that matters, because the cost was invisible.
+
+    Actions touches the draft twice — once for the preview squad an unlinked
+    visitor is shown, once for the number a wildcard is measured against — and
+    neither reads a word of the rationale. Both took the default, so the page
+    blocked for twelve seconds on an LLM call and then discarded its output.
+    Nothing in the response would have looked wrong; it was just slow.
+    """
+    monkeypatch.setattr(
+        service,
+        "_draft_summary",
+        lambda built: pytest.fail("Actions blocked on the written rationale"),
+    )
+    service._draft_cache.clear()
+
+    service.actions_for(1, horizon=5)
+
+    service._draft_cache.clear()

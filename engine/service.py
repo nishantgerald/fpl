@@ -113,7 +113,10 @@ def _squad_for_advice(
         # about a squad someone does not own is a demo, not a recommendation.
         if not started:
             try:
-                draft = draft_squad(horizon=DEFAULT_HORIZON) or {}
+                # Ids only — the written rationale belongs to the draft page,
+                # and asking for it here made every unlinked visitor wait on an
+                # LLM call before Actions could render anything at all.
+                draft = draft_squad(horizon=DEFAULT_HORIZON, with_summary=False) or {}
                 bench = {int(p["id"]) for p in draft.get("bench") or []}
                 ids = [int(p["id"]) for p in draft.get("squad") or []]
                 squad = [elements[i] for i in ids if i in elements]
@@ -299,8 +302,15 @@ def actions_for(
                 for p in squad
             )
             try:
+                # Only the number is wanted here, to measure the wildcard
+                # against. Asking for the prose too made this page wait on an
+                # LLM call for a paragraph it discards.
                 optimal = float(
-                    (draft_squad(horizon=horizon).get("squad") or {}).get("horizon_xpts") or 0
+                    (
+                        draft_squad(horizon=horizon, with_summary=False).get("squad")
+                        or {}
+                    ).get("horizon_xpts")
+                    or 0
                 )
             except Exception:
                 optimal = squad_total
@@ -1001,11 +1011,17 @@ def draft_squad(
     pinned=(),
     refresh: bool = False,
     strategy: str = "max_points",
+    with_summary: bool = True,
 ) -> dict:
     """A recommended opening fifteen, for the window before the GW1 deadline.
 
     Raises :class:`ServiceError` once the season is under way — at that point
     the real advice routes apply and a generic draft would be actively wrong.
+
+    ``with_summary=False`` skips the written rationale. The prose is an LLM call
+    that takes about twelve seconds, and :func:`actions_for` was paying it to
+    read one number off the squad and throw the words away — so the Actions page
+    sat blank for twelve seconds behind a paragraph nobody would ever see.
     """
     import time as _time
 
@@ -1037,6 +1053,12 @@ def draft_squad(
     # do — which is why the caller is told whether anything changed rather than
     # left to infer it from a screen that did not flicker.
     if not refresh and cached and _time.time() - cached[0] < _DRAFT_TTL_SECONDS:
+        # A squad cached without prose still answers a caller who wants prose —
+        # writing it now costs the LLM call but not the solver, which is the
+        # expensive half to repeat.
+        if with_summary and "summary" not in cached[1]:
+            cached[1]["summary"] = _draft_summary(cached[1])
+            _draft_cache[key] = (cached[0], cached[1])
         return cached[1]
 
     projection = projections_for(horizon, engine)
@@ -1062,9 +1084,10 @@ def draft_squad(
             "engine": projection.engine,
             "engine_requested": projection.engine_requested,
             "pool_size": len(rows),
-            "summary": _draft_summary(built),
         }
     )
+    if with_summary:
+        built["summary"] = _draft_summary(built)
     _draft_cache[key] = (_time.time(), built)
     return built
 
