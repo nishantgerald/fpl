@@ -334,3 +334,43 @@ def test_each_strategy_gets_its_own_cache_entry(monkeypatch):
 
     assert recomputed["called"], "a different strategy was served the cached one"
     service._draft_cache.clear()
+
+
+def test_the_preview_squad_does_not_silence_the_buy_shortlists(monkeypatch):
+    """The preview is the optimiser's own output, so almost nothing improves it.
+
+    Filtering the shortlists on gain against it returned four empty lists and
+    hid the whole buying section behind a technicality — the gain is only a
+    real measurement when the squad is really theirs.
+    """
+    seen = {}
+
+    def _capture(elements, projections, swings, owned, squad, horizon, **kwargs):
+        seen["squad"] = squad
+        seen["bench_ids"] = kwargs.get("bench_ids")
+        return []
+
+    monkeypatch.setattr(service.advice_mod, "buy_shortlists", _capture)
+    monkeypatch.setattr(
+        service, "_squad_for_advice", lambda *a, **k: ([{"id": 1}], [], "preview_draft")
+    )
+    monkeypatch.setattr(service.fpl_client, "season_state", lambda: {"gameweek": 1})
+    monkeypatch.setattr(service.fpl_client, "fixtures", lambda: [])
+    monkeypatch.setattr(service.fpl_client, "history", lambda entry: {})
+    monkeypatch.setattr(
+        service,
+        "projections_for",
+        lambda *a, **k: service.Projection(
+            data={"elements": [], "teams": [], "chips": []},
+            projections={},
+            gameweeks=[],
+            engine="xpts",
+            engine_requested="xpts",
+        ),
+    )
+    monkeypatch.setattr(service.ticker_mod, "build_ticker", lambda *a, **k: {"swings": []})
+
+    service.actions_for(1)
+
+    assert seen["squad"] == []
+    assert seen["bench_ids"] is None

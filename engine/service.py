@@ -238,15 +238,23 @@ def actions_for(
     #    rather than one list of whoever happens to be at a club with an easing
     #    run. Every candidate clears an absolute points-per-gameweek bar, which
     #    the old version had none of.
+    #
+    #    The gain is only measured against a squad that is actually theirs. The
+    #    preview is the optimiser's own output, so by construction almost
+    #    nothing improves it — filtering on gain there returned four empty lists
+    #    and hid the whole feature behind a technicality. Owned players stay
+    #    excluded either way, since recommending someone already on screen reads
+    #    as a mistake.
+    known_squad = squad if unavailable is None else []
     shortlists = advice_mod.buy_shortlists(
         elements,
         projection.projections,
         swings,
         my_ids,
-        squad,
+        known_squad,
         horizon,
         teams=teams,
-        bench_ids=bench_ids,
+        bench_ids=bench_ids if unavailable is None else None,
     )
 
     # 4. Chips, valued against this squad rather than in the abstract.
