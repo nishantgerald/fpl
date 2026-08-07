@@ -313,6 +313,59 @@ def test_the_value_list_does_not_return_three_goalkeepers():
     assert "GKP" in positions and "DEF" in positions and "MID" in positions
 
 
+def test_a_target_that_would_downgrade_the_squad_is_not_worth_buying():
+    """Caught in production: 'Worth buying' listed a swap that lost 3.3 points.
+
+    Correctly ranked by projection, and a downgrade — which is the original
+    complaint wearing different clothes. Where the squad is known, the gain is
+    the filter as well as the sort key.
+    """
+    elements, projections = _buy_pool()
+    strong = _element(9, "AlreadyBetter", position=3, price=8.0, team=1)
+    projections[9] = _projection(48.0)  # better than every midfielder on offer
+    keeper = _element(11, "Keeper", position=1, price=4.5, team=1)
+    projections[11] = _projection(30.0)
+
+    lists = advice.buy_shortlists(
+        elements,
+        projections,
+        {},
+        {9, 11},
+        [strong, keeper],
+        horizon=5,
+        teams=TEAMS,
+    )
+
+    for group in lists:
+        for player in group["players"]:
+            assert player["gain"] >= advice.MIN_TRANSFER_GAIN
+
+
+def test_a_squad_with_no_upgrades_is_told_so_rather_than_shown_four_tabs():
+    elements, projections = _buy_pool()
+    unbeatable = _element(9, "Star", position=3, price=8.0, team=1)
+    projections[9] = _projection(90.0)
+
+    lists = advice.buy_shortlists(
+        elements, projections, {}, {9}, [unbeatable], horizon=5, teams=TEAMS
+    )
+
+    assert lists == []
+
+
+def test_without_a_squad_the_lists_keep_their_own_ranking():
+    """Anonymous and preview users have no swap to measure against. Filtering
+    on a gain we cannot compute would empty the feature for them."""
+    elements, projections = _buy_pool()
+
+    lists = advice.buy_shortlists(
+        elements, projections, {}, set(), [], horizon=5, teams=TEAMS
+    )
+
+    assert lists
+    assert all(p["gain"] is None for g in lists for p in g["players"])
+
+
 def test_a_player_already_owned_is_never_a_buy_target():
     elements, projections = _buy_pool()
 

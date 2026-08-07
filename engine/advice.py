@@ -454,10 +454,36 @@ def buy_shortlists(
         entry.update(_upgrade_over(entry, weakest.get(position)))
         candidates.append(entry)
 
+    # "Worth buying" has to mean worth buying *for this manager*. Against a
+    # live squad the first version listed players whose swap was negative — a
+    # good player, correctly ranked, who would downgrade the fifteen you own.
+    # That is the original complaint in new clothes, so where the squad is
+    # known the gain is both the filter and the sort key.
+    know_the_squad = bool(weakest)
+
     lists: list[dict] = []
     for key, title, subtitle in SHORTLISTS:
-        picked = _rank(key, candidates, swings)[:per_list]
+        picked = _rank(key, candidates, swings)
+        if know_the_squad:
+            picked = [
+                p for p in picked if (p.get("gain") or 0) >= MIN_TRANSFER_GAIN
+            ]
+            picked.sort(key=lambda p: -p["gain"])
+        picked = picked[:per_list]
         if not picked:
+            # An empty list is worth saying out loud once the squad is known:
+            # "nothing here improves your fifteen" is a real answer, and better
+            # than three names that would make it worse.
+            if know_the_squad:
+                lists.append(
+                    {
+                        "key": key,
+                        "title": title,
+                        "subtitle": subtitle,
+                        "players": [],
+                        "empty_reason": "Nothing here improves your squad.",
+                    }
+                )
             continue
         lists.append(
             {
@@ -467,6 +493,10 @@ def buy_shortlists(
                 "players": picked,
             }
         )
+    # Four empty lists is not a feature. If nothing anywhere is an upgrade, the
+    # squad is in good shape and one line says so better than four tabs do.
+    if all(not group["players"] for group in lists):
+        return []
     return lists
 
 
