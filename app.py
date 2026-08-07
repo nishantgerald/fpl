@@ -48,6 +48,7 @@ from engine import (
     chips,
     content,
     digest,
+    draft,
     fcps_llm,
     fpl_client,
     leagues,
@@ -1795,6 +1796,7 @@ def draft_squad():
     against. One squad, computed once, served to everyone.
     """
     pinned = [p.strip() for p in (request.args.get("pin") or "").split(",") if p.strip()]
+    strategy = (request.args.get("strategy") or draft.DEFAULT_STRATEGY).strip()
 
     # Only metered when prose would actually be generated. The squad itself is
     # arithmetic and free; a cached summary costs nothing either.
@@ -1802,6 +1804,7 @@ def draft_squad():
         horizon=_int_arg("horizon", service.DEFAULT_HORIZON, 1, service.MAX_HORIZON),
         engine=_engine_arg(),
         pinned=pinned,
+        strategy=strategy,
     ):
         try:
             llm_budget.check_client(_client_id())
@@ -1816,6 +1819,7 @@ def draft_squad():
                 ),
                 engine=_engine_arg(),
                 pinned=pinned,
+                strategy=strategy,
                 # What the Rebuild button sends. Skipping the hour-long cache is
                 # the only way the control can honestly claim to rebuild.
                 refresh=request.args.get("refresh") in ("1", "true"),

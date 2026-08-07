@@ -997,7 +997,11 @@ _DRAFT_TTL_SECONDS = 3600
 
 
 def draft_squad(
-    horizon: int = 5, engine: str = "xpts", pinned=(), refresh: bool = False
+    horizon: int = 5,
+    engine: str = "xpts",
+    pinned=(),
+    refresh: bool = False,
+    strategy: str = "max_points",
 ) -> dict:
     """A recommended opening fifteen, for the window before the GW1 deadline.
 
@@ -1021,7 +1025,11 @@ def draft_squad(
             gameweek=state["gameweek"],
         )
 
-    key = f"{horizon}:{engine}:{','.join(sorted(pinned))}"
+    # The strategy is part of the key. Without it, switching strategy would be
+    # answered from the cache of whichever one was asked for first — the
+    # selector would appear to do nothing, which is the bug the Rebuild button
+    # already had.
+    key = f"{horizon}:{engine}:{strategy}:{','.join(sorted(pinned))}"
     cached = _draft_cache.get(key)
     # ``refresh`` is what the Rebuild button asks for. Without it the hour-long
     # cache answers, so the button re-rendered identical bytes and looked
@@ -1037,11 +1045,12 @@ def draft_squad(
     teams = {int(t["id"]): t.get("short_name", "UNK") for t in data.get("teams", [])}
 
     rows = draft.candidates(data.get("elements", []), projection.projections, teams)
-    built = draft.build(rows, pinned=pinned)
+    built = draft.build(rows, pinned=pinned, strategy=strategy)
     if built is None:
         raise ServiceError(
             "draft_unavailable",
-            "Could not assemble a legal squad from the current player data.",
+            "Could not assemble a legal squad under that strategy — its filter "
+            "leaves too few players to field a legal fifteen.",
             status=503,
         )
 
@@ -1076,7 +1085,9 @@ def _draft_summary(built: Mapping) -> dict:
         return {"available": False, "reason": type(error).__name__}
 
 
-def draft_summary_is_cached(horizon: int, engine: str, pinned=()) -> bool:
+def draft_summary_is_cached(
+    horizon: int, engine: str, pinned=(), strategy: str = "max_points"
+) -> bool:
     """Whether a draft summary already exists, so the route can skip metering.
 
     Charging a caller's hourly share for a cached response would throttle people
@@ -1085,7 +1096,7 @@ def draft_summary_is_cached(horizon: int, engine: str, pinned=()) -> bool:
     import time as _time
 
     try:
-        key = f"{horizon}:{engine}:{','.join(sorted(pinned))}"
+        key = f"{horizon}:{engine}:{strategy}:{','.join(sorted(pinned))}"
         cached = _draft_cache.get(key)
         return bool(cached and _time.time() - cached[0] < _DRAFT_TTL_SECONDS)
     except Exception:

@@ -287,7 +287,9 @@ def test_without_refresh_the_cache_still_answers(monkeypatch):
     """The cache is there for a reason — an ordinary page load must not pay for
     a full optimiser run."""
     service._draft_cache.clear()
-    service._draft_cache["5:xpts:"] = (9e18, {"squad": [{"id": 1}]})
+    # The strategy is part of the key now — without it, switching strategy
+    # would be answered from whichever one was requested first.
+    service._draft_cache["5:xpts:max_points:"] = (9e18, {"squad": [{"id": 1}]})
 
     monkeypatch.setattr(
         service.fpl_client,
@@ -301,4 +303,34 @@ def test_without_refresh_the_cache_still_answers(monkeypatch):
     )
 
     assert service.draft_squad(horizon=5) == {"squad": [{"id": 1}]}
+    service._draft_cache.clear()
+
+
+def test_each_strategy_gets_its_own_cache_entry(monkeypatch):
+    """Otherwise the strategy selector silently does nothing.
+
+    Exactly the bug the Rebuild button had: a control that changes a query
+    parameter the cache key ignores returns the previous answer and looks
+    broken.
+    """
+    service._draft_cache.clear()
+    service._draft_cache["5:xpts:max_points:"] = (9e18, {"squad": [{"id": 1}]})
+
+    monkeypatch.setattr(
+        service.fpl_client,
+        "season_state",
+        lambda: {"started": False, "gameweek": 1, "gameweek_name": "GW1", "deadline": "x"},
+    )
+    recomputed = {"called": False}
+
+    def _mark(horizon, engine):
+        recomputed["called"] = True
+        raise service.ServiceError("stop", "far enough", status=503)
+
+    monkeypatch.setattr(service, "projections_for", _mark)
+
+    with pytest.raises(service.ServiceError):
+        service.draft_squad(horizon=5, strategy="differential")
+
+    assert recomputed["called"], "a different strategy was served the cached one"
     service._draft_cache.clear()

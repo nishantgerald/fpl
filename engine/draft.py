@@ -15,11 +15,20 @@ buys four expensive substitutes and starves the pitch; every real squad spends
 the bench to the floor. So squad membership and XI selection are separate
 decisions and only the XI is in the objective.
 
-*It is solved exactly where possible.* Budget, the three-per-club cap, the
-positional quotas and the formation interact, so a greedy points-per-million
-pick is routinely globally wrong. When SciPy is present this is a mixed-integer
-program. When it isn't — the web process is not required to have the ML stack —
-it degrades to a documented greedy pass with local swaps rather than failing.
+*It is solved exactly.* Budget, the three-per-club cap, the positional quotas
+and the formation interact, so a greedy points-per-million pick is routinely
+globally wrong — and not by a little. SciPy is a hard requirement for this
+reason: for months it was absent from `requirements.txt` while being installed
+locally, so every production build silently took the greedy path and served a
+squad worth 205 xPts that left £14m unspent, against a true optimum of 233 that
+spends the lot. The fallback still exists for an environment that genuinely
+cannot carry the solver, but it is a degradation, not an equivalent.
+
+*There is more than one right answer.* The optimum is a single squad, so a
+"rebuild" button on one objective can only ever return the same fifteen. What
+actually differs is what you are optimising *for* — points now, money kept back,
+a squad nobody else owns. Those are the strategies below, and they are the same
+program under different constraints.
 """
 
 from __future__ import annotations
@@ -34,6 +43,38 @@ MAX_PER_CLUB = 3
 XI_SIZE = 11
 # The eight legal formations collapse to per-position bounds on the XI.
 XI_BOUNDS = {"GKP": (1, 1), "DEF": (3, 5), "MID": (2, 5), "FWD": (1, 3)}
+
+# Each strategy is the same mixed-integer program with a different objective or
+# a different candidate pool. They are not presets over a single answer: a
+# differential squad and a max-points squad disagree about who to buy, and the
+# point of offering both is that the disagreement is the information.
+STRATEGIES: dict[str, dict] = {
+    "max_points": {
+        "label": "Max points",
+        "blurb": "The highest-scoring legal fifteen. Spends the budget to the "
+                 "floor and does not care what anyone else owns.",
+    },
+    "value": {
+        "label": "Best value",
+        "blurb": "Most points per million, so it deliberately banks money — "
+                 "useful if you would rather hold funds for early transfers.",
+    },
+    "differential": {
+        "label": "Differential",
+        "blurb": "Only players owned by under 10%. Lower ceiling, but a haul "
+                 "gains rank instead of merely keeping pace.",
+    },
+    "balanced": {
+        "label": "No premiums",
+        "blurb": "Nobody over £9.5m. Gives up the very top end for a squad "
+                 "with no single point of failure.",
+    },
+}
+DEFAULT_STRATEGY = "max_points"
+
+# Thresholds for the strategies that filter rather than re-weight.
+DIFFERENTIAL_MAX_OWNERSHIP = 10.0
+BALANCED_MAX_PRICE_TENTHS = 95
 
 
 def candidates(
@@ -91,22 +132,94 @@ def build(
     rows: Sequence[Mapping],
     budget_tenths: int = BUDGET_TENTHS,
     pinned: Sequence[str] = (),
+    strategy: str = DEFAULT_STRATEGY,
 ) -> dict | None:
-    """A legal fifteen maximising projected XI points, or ``None``.
+    """A legal fifteen under one strategy, or ``None``.
 
     ``pinned`` names players (by ``web_name``) that must appear — the seam for
     research the projections can't see, such as a rule the model was never
     trained on or a pre-season signing.
+
+    ``strategy`` selects what is being maximised; see :data:`STRATEGIES`. An
+    unknown name falls back to the default rather than raising, because it
+    arrives from a query string.
     """
-    solved = _solve_exact(rows, budget_tenths, set(pinned))
+    if strategy not in STRATEGIES:
+        strategy = DEFAULT_STRATEGY
+
+    pool, weights = _shape_problem(rows, strategy)
+    if len(pool) < 15:
+        # A filter can empty the pool below a legal squad — a differential-only
+        # world may not contain two keepers and five defenders. Say so by
+        # returning None rather than quietly serving the unfiltered answer,
+        # which would be a squad that is not what the label promises.
+        return None
+
+    solved = _solve_exact(pool, budget_tenths, set(pinned), weights)
     if solved is None:
-        solved = _solve_greedy(rows, budget_tenths, set(pinned))
+        solved = _solve_greedy(pool, budget_tenths, set(pinned))
     if solved is None:
         return None
-    return _shape(solved, rows)
+    shaped = _shape(solved, pool)
+    shaped["strategy"] = strategy
+    shaped["strategy_label"] = STRATEGIES[strategy]["label"]
+    shaped["strategy_blurb"] = STRATEGIES[strategy]["blurb"]
+    shaped["exact"] = _solver_available()
+    return shaped
 
 
-def _solve_exact(rows, budget_tenths: int, pinned: set[str]) -> list[int] | None:
+def _solver_available() -> bool:
+    """Whether the exact solver is reachable in this process.
+
+    Surfaced in the payload because the difference is not cosmetic: without it
+    the answer is roughly 28 points worse and leaves £14m unspent, and a user
+    has no way to tell from the squad alone.
+    """
+    try:
+        import scipy.optimize  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _shape_problem(rows: Sequence[Mapping], strategy: str):
+    """The candidate pool and objective weights for one strategy.
+
+    Filtering strategies narrow the pool; re-weighting strategies change what a
+    player is worth. Both are expressed here so `_solve_exact` stays a solver
+    and knows nothing about product decisions.
+    """
+    if strategy == "differential":
+        pool = [
+            r for r in rows
+            if float(r.get("selected_by_percent") or 0.0) < DIFFERENTIAL_MAX_OWNERSHIP
+        ]
+        return pool, [r["value"] for r in pool]
+
+    if strategy == "balanced":
+        pool = [
+            r for r in rows
+            if int(r.get("price_tenths") or 0) <= BALANCED_MAX_PRICE_TENTHS
+        ]
+        return pool, [r["value"] for r in pool]
+
+    if strategy == "value":
+        # Points per million, so the solver prefers efficiency over ceiling and
+        # naturally leaves money unspent. Guarded against a zero price, which
+        # would otherwise be infinitely attractive.
+        pool = list(rows)
+        return pool, [
+            r["value"] / max(int(r.get("price_tenths") or 0) / 10.0, 0.1) for r in pool
+        ]
+
+    pool = list(rows)
+    return pool, [r["value"] for r in pool]
+
+
+def _solve_exact(
+    rows, budget_tenths: int, pinned: set[str], weights=None
+) -> list[int] | None:
     """Mixed-integer program. Returns squad indices, or None if SciPy is absent."""
     try:
         import numpy as np
@@ -118,7 +231,10 @@ def _solve_exact(rows, budget_tenths: int, pinned: set[str]) -> list[int] | None
     if n < 15:
         return None
 
-    value = np.array([r["value"] for r in rows], dtype="float64")
+    value = np.array(
+        list(weights) if weights is not None else [r["value"] for r in rows],
+        dtype="float64",
+    )
     price = np.array([r["price_tenths"] for r in rows], dtype="float64")
     positions = [r["position"] for r in rows]
     clubs = [r["team_id"] for r in rows]
