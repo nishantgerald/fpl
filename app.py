@@ -235,8 +235,15 @@ def _player_payload(element, team_short, projection, fcps_entry=None):
     # Flattened in gameweek order, so a double gameweek contributes both of its
     # matches and a blank contributes none — which is exactly what a reader
     # scanning a run wants to see.
+    #
+    # Each fixture carries the gameweek it belongs to. Position in this list is
+    # not the gameweek: a blank contributes nothing and a double contributes
+    # two, so the nth entry is only the nth gameweek for a team that plays
+    # exactly once every week. Any client laying these out in columns has to
+    # align on this number, or it will sit one player's GW4 under another's GW3
+    # and invite exactly the comparison the screen exists to prevent.
     next_fixtures = [
-        fixture
+        {**fixture, "gameweek": int(gameweek.get("gameweek", 0))}
         for gameweek in projection.get("per_gameweek", [])
         for fixture in gameweek.get("fixtures", [])
     ]

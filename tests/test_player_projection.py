@@ -173,6 +173,44 @@ def test_a_blank_gameweek_simply_contributes_nothing():
     assert [f["opponent"] for f in fixtures] == ["COV", "CHE"]
 
 
+def test_each_fixture_says_which_gameweek_it_is():
+    """Position in the run is not the gameweek, and a client that assumes it is
+    will lay one player's GW3 beside another's GW4.
+
+    A blank contributes nothing, so everything after it shifts left by one. Two
+    players compared side by side then have their runs misaligned by exactly the
+    number of blanks between them — silently, because both rows are full of
+    plausible three-letter clubs."""
+    projection = {
+        "per_gameweek": [
+            {"gameweek": 1, "fixtures": [{"opponent": "COV", "home": True, "fdr": 2}]},
+            {"gameweek": 2, "fixtures": []},
+            {"gameweek": 3, "fixtures": [{"opponent": "CHE", "home": True, "fdr": 4}]},
+        ],
+    }
+
+    fixtures = _fixtures_for(projection)
+
+    assert [f["gameweek"] for f in fixtures] == [1, 3]
+
+
+def test_both_halves_of_a_double_carry_the_same_gameweek():
+    """So a column can hold two chips rather than borrowing the next week's."""
+    projection = {
+        "per_gameweek": [
+            {
+                "gameweek": 7,
+                "fixtures": [
+                    {"opponent": "COV", "home": True, "fdr": 2},
+                    {"opponent": "WOL", "home": False, "fdr": 2},
+                ],
+            },
+        ],
+    }
+
+    assert [f["gameweek"] for f in _fixtures_for(projection)] == [7, 7]
+
+
 def test_no_scheduled_matches_gives_an_empty_run_not_an_error():
     """Which is what lets the client say "No games scheduled" rather than
     rendering an empty strip that reads as a loading failure."""
