@@ -94,3 +94,88 @@ def test_the_horizon_is_clamped_to_the_supported_range(client, monkeypatch):
     client.get("/api/player/4/projection?horizon=0")
 
     assert seen == [service.MAX_HORIZON, 1]
+
+
+# ------------------------------------------------- the fixture run on a player
+
+
+def _fixtures_for(projection):
+    """`_player_payload` builds the photo URL from `request.host_url`, so it
+    needs a request context even though nothing here is about routing."""
+    with flask_app.app.test_request_context():
+        return flask_app._player_payload(
+            {"id": 1, "web_name": "Test", "status": "a", "element_type": 3},
+            "ARS",
+            projection,
+        )["next_fixtures"]
+
+
+def test_next_fixtures_carries_the_whole_run_not_one_gameweek():
+    """The field is named for a run and every client treats it as one.
+
+    It was built from `per_gameweek[0]["fixtures"]` — the fixtures of a single
+    gameweek, which is normally exactly one match. The players list takes four
+    of them and the comparison screen takes five, so both rendered a single
+    chip and the fixture context those screens exist to give was simply absent.
+    Nothing errored; there was just one chip where there should have been five.
+    """
+    projection = {
+        "per_gameweek": [
+            {"gameweek": 1, "fixtures": [{"opponent": "COV", "home": True, "fdr": 2}]},
+            {"gameweek": 2, "fixtures": [{"opponent": "AVL", "home": False, "fdr": 4}]},
+            {"gameweek": 3, "fixtures": [{"opponent": "CHE", "home": True, "fdr": 4}]},
+            {"gameweek": 4, "fixtures": [{"opponent": "SUN", "home": False, "fdr": 3}]},
+            {"gameweek": 5, "fixtures": [{"opponent": "BHA", "home": False, "fdr": 3}]},
+        ],
+    }
+
+    fixtures = _fixtures_for(projection)
+
+    assert [f["opponent"] for f in fixtures] == [
+        "COV", "AVL", "CHE", "SUN", "BHA",
+    ]
+
+
+def test_a_double_gameweek_contributes_both_matches():
+    """Flattening in gameweek order is what makes a double visible at all —
+    the old code would have shown both of GW1's and none of anything else."""
+    projection = {
+        "per_gameweek": [
+            {
+                "gameweek": 1,
+                "fixtures": [
+                    {"opponent": "COV", "home": True, "fdr": 2},
+                    {"opponent": "WOL", "home": False, "fdr": 2},
+                ],
+            },
+            {"gameweek": 2, "fixtures": [{"opponent": "AVL", "home": False, "fdr": 4}]},
+        ],
+    }
+
+    fixtures = _fixtures_for(projection)
+
+    assert len(fixtures) == 3
+
+
+def test_a_blank_gameweek_simply_contributes_nothing():
+    """A team with no match that week drops out of the run rather than
+    appearing as a placeholder — which is what a reader scanning it wants."""
+    projection = {
+        "per_gameweek": [
+            {"gameweek": 1, "fixtures": [{"opponent": "COV", "home": True, "fdr": 2}]},
+            {"gameweek": 2, "fixtures": []},
+            {"gameweek": 3, "fixtures": [{"opponent": "CHE", "home": True, "fdr": 4}]},
+        ],
+    }
+
+    fixtures = _fixtures_for(projection)
+
+    assert [f["opponent"] for f in fixtures] == ["COV", "CHE"]
+
+
+def test_no_scheduled_matches_gives_an_empty_run_not_an_error():
+    """Which is what lets the client say "No games scheduled" rather than
+    rendering an empty strip that reads as a loading failure."""
+    fixtures = _fixtures_for({"per_gameweek": []})
+
+    assert fixtures == []

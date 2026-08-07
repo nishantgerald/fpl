@@ -96754,8 +96754,8 @@ l=A.c3(B.mV,j,j,j)
 return A.i2(e,j,c,A.aU_(new A.RP(r,A.b([q,p,o,n,m,A.Eq(l,"Leagues",g?A.c3(B.M0,j,j,j):A.c3(B.mV,j,j,j))],d),new A.a7K(a),j),new A.oO(j,j,j,j,j,s,j,j,j,j,j,j)))},
 aph(a,b){var s=null,r=A.D(b,s,s,s,s,s,s)
 return A.aMP(s,B.q,B.i,A.D9(s,s,B.MS,s,s,new A.a7J(a),s,s,"Back to my team",s),r)},
-ab8(a){var s=null,r=t.p,q=A.aM(A.b([A.ag(s,B.Hb,B.j,s,s,new A.am(B.b1,s,s,A.as(6),s,s,B.t),s,32,s,s,s,s,s,32),B.cC,B.a4F],r),B.n,B.e,B.h,0,s),p=A.b([A.D9(s,s,B.MV,s,s,new A.a7G(a),s,s,"Analytics",s)],r)
-if($.fR().b==null)p.push(new A.au(B.lV,A.kv(B.a4N,new A.a7H(a),A.Ve(s,s,B.b1,s,s,s,s,s,s,B.q,s,s,B.qS,s,new A.cU(A.as(8),B.w),s,s,s,s,s)),s))
+ab8(a){var s=null,r=t.p,q=A.aM(A.b([A.ag(s,B.Hb,B.j,s,s,new A.am(B.b1,s,s,A.as(6),s,s,B.t),s,32,s,s,s,s,s,32),B.cC,B.a4G],r),B.n,B.e,B.h,0,s),p=A.b([A.D9(s,s,B.MV,s,s,new A.a7G(a),s,s,"Analytics",s)],r)
+if($.fR().b==null)p.push(new A.au(B.lV,A.kv(B.a4O,new A.a7H(a),A.Ve(s,s,B.b1,s,s,s,s,s,s,B.q,s,s,B.qS,s,new A.cU(A.as(8),B.w),s,s,s,s,s)),s))
 else B.b.I(p,A.b([A.D9(s,s,B.N1,s,s,new A.a7I(a),s,s,"Account",s),B.as],r))
 return A.aMP(p,B.q,s,s,q)},
 gR(){return this.c}}
@@ -97302,7 +97302,7 @@ m=A.b([B.aG,q,B.bY,p,B.b6,o,B.R,n,B.aW,s.zW(m,s.gaqo())],l)
 q=s.at
 if(q){q=A.aM(A.b([A.bT(A.Po(B.bC,r),1,r),new A.au(B.ix,A.D("or",r,r,r,A.aU(r,r,B.o,r,r,r,r,r,r,r,r,12,r,r,r,r,r,!0,r,r,r,r,r,r,r,r),r,r),r),A.bT(A.Po(B.bC,r),1,r)],l),B.n,B.e,B.h,0,r)
 p=s.Q?r:new A.auJ()
-B.b.I(m,A.b([B.ci,q,B.ci,A.ED(B.a7U,B.a4s,p,A.EF(r,r,r,r,r,r,r,r,r,B.P,r,r,B.eN,r,new A.cU(A.as(10),B.w),new A.aW(B.bC,1,B.B,-1),r,r,r,r))],l))}q=s.Q?r:new A.auK(s)
+B.b.I(m,A.b([B.ci,q,B.ci,A.ED(B.a7U,B.a4t,p,A.EF(r,r,r,r,r,r,r,r,r,B.P,r,r,B.eN,r,new A.cU(A.as(10),B.w),new A.aW(B.bC,1,B.B,-1),r,r,r,r))],l))}q=s.Q?r:new A.auK(s)
 m.push(A.kv(A.D(s.as?"Already have an account? Sign in":"New here? Create an account",r,r,r,r,r,r),q,r))
 if(!s.as){q=s.Q?r:s.gaog()
 m.push(A.kv(A.D("Forgot your password?",r,r,r,A.aU(r,r,B.o,r,r,r,r,r,r,r,r,13,r,r,r,r,r,!0,r,r,r,r,r,r,r,r),r,r),q,r))}return m},
@@ -97679,10 +97679,10 @@ p=A.D(k.b,l,l,l,B.DT,l,l)
 o=s.ar(0.12)
 n=A.as(5)
 m=t.p
-return A.ag(l,A.aM(A.b([A.bT(A.an(A.b([A.aM(A.b([p,B.as,A.ag(l,A.D(j.toUpperCase(),l,l,l,A.aU(l,l,s,l,l,l,l,l,l,l,l,10,l,l,B.u,l,l,!0,l,0.5,l,l,l,l,l,l),l,l),B.j,l,l,new A.am(o,l,l,n,l,l,B.t),l,l,l,l,B.r3,l,l,l)],m),B.n,B.e,B.h,0,l),B.aL,A.D(k.w,l,l,l,B.DX,l,l)],m),B.x,B.e,B.h),1,l),B.fd,A.an(A.b([A.D("+"+B.c.S(k.d,0),l,l,l,A.aU(l,l,s,l,l,l,l,l,l,l,l,20,l,l,B.dm,l,l,!0,l,l,l,l,l,l,l,l),l,l),B.a4I],m),B.cq,B.e,B.h)],m),B.x,B.e,B.h,0,l),B.j,l,l,new A.am(B.i,l,q,r,l,l,B.t),l,l,l,B.fQ,B.dP,l,l,l)}}
+return A.ag(l,A.aM(A.b([A.bT(A.an(A.b([A.aM(A.b([p,B.as,A.ag(l,A.D(j.toUpperCase(),l,l,l,A.aU(l,l,s,l,l,l,l,l,l,l,l,10,l,l,B.u,l,l,!0,l,0.5,l,l,l,l,l,l),l,l),B.j,l,l,new A.am(o,l,l,n,l,l,B.t),l,l,l,l,B.r3,l,l,l)],m),B.n,B.e,B.h,0,l),B.aL,A.D(k.w,l,l,l,B.DX,l,l)],m),B.x,B.e,B.h),1,l),B.fd,A.an(A.b([A.D("+"+B.c.S(k.d,0),l,l,l,A.aU(l,l,s,l,l,l,l,l,l,l,l,20,l,l,B.dm,l,l,!0,l,l,l,l,l,l,l,l),l,l),B.a4J],m),B.cq,B.e,B.h)],m),B.x,B.e,B.h,0,l),B.j,l,l,new A.am(B.i,l,q,r,l,l,B.t),l,l,l,B.fQ,B.dP,l,l,l)}}
 A.a17.prototype={
 F(a){var s=null,r=A.as(12),q=A.dh(B.fJ.ar(0.4),1),p=this.c,o=A.D(p?"FPL keeps drafted squads private until the first deadline, so these are worked against the squad we would pick. Upload a screenshot of your team and every line below becomes about your players.":"FPL keeps drafted squads private until the first deadline, so these are worked against the squad we would pick. Connect your FPL session and every line below becomes about your players.",s,s,s,B.a3r,s,s)
-return A.ag(s,A.an(A.b([B.Wu,B.aL,o,B.aK,new A.h9(B.ft,s,s,A.ad9(A.c3(p?B.rL:B.M4,s,s,17),B.a4P,new A.aE7(this,a),A.wg(B.fJ,s,B.Kn,new A.cU(A.as(10),B.w),s)),s)],t.p),B.x,B.e,B.h),B.j,s,s,new A.am(B.I8,s,q,r,s,s,B.t),s,s,s,s,B.dP,s,s,s)}}
+return A.ag(s,A.an(A.b([B.Wu,B.aL,o,B.aK,new A.h9(B.ft,s,s,A.ad9(A.c3(p?B.rL:B.M4,s,s,17),B.a4Q,new A.aE7(this,a),A.wg(B.fJ,s,B.Kn,new A.cU(A.as(10),B.w),s)),s)],t.p),B.x,B.e,B.h),B.j,s,s,new A.am(B.I8,s,q,r,s,s,B.t),s,s,s,s,B.dP,s,s,s)}}
 A.aE7.prototype={
 $0(){var s=this.a.c?"/import":"/account"
 return A.om(this.b,s,t.X)},
@@ -97709,7 +97709,7 @@ A.Wn.prototype={
 aB(){this.aJ()
 $.fR().wv().b2(new A.avb(this),t.a)},
 F(a){var s=null
-return A.i2(s,B.aa,A.eK(A.b([B.a50,B.bY,B.a4L,B.b6,new A.qa(B.Mk,B.ay,"Who scores most over the next five gameweeks?","Projections","Every player ranked by expected points, by position.",new A.av5(a),s),new A.qa(B.rK,B.q_,"Whose fixtures are easy, and whose are about to turn?","Fixture ticker","Every club's next six, sorted by how kind the run is.",new A.av6(a),s),new A.qa(B.Ml,B.di,"Who should wear the armband this week?","Captain rankings","The full ordering, not just the pick on your team page.",new A.av7(a),s),new A.qa(B.rA,B.Iu,"Player A or player B \u2014 which do I own?","Compare players","Two to four head to head, with who leads each measure.",new A.av8(a),s),new A.qa(B.j_,B.eH,"Who fits my budget in this position?","Player search","Filter and sort all 700, with the numbers behind each.",new A.av9(a),s),B.Dd,new A.a_F(this.d,s)],t.p),B.qV,s,B.O,!1),s)}}
+return A.i2(s,B.aa,A.eK(A.b([B.a51,B.bY,B.a4M,B.b6,new A.qa(B.Mk,B.ay,"Who scores most over the next five gameweeks?","Projections","Every player ranked by expected points, by position.",new A.av5(a),s),new A.qa(B.rK,B.q_,"Whose fixtures are easy, and whose are about to turn?","Fixture ticker","Every club's next six, sorted by how kind the run is.",new A.av6(a),s),new A.qa(B.Ml,B.di,"Who should wear the armband this week?","Captain rankings","The full ordering, not just the pick on your team page.",new A.av7(a),s),new A.qa(B.rA,B.Iu,"Player A or player B \u2014 which do I own?","Compare players","Two to four head to head, with who leads each measure.",new A.av8(a),s),new A.qa(B.j_,B.eH,"Who fits my budget in this position?","Player search","Filter and sort all 700, with the numbers behind each.",new A.av9(a),s),B.Dd,new A.a_F(this.d,s)],t.p),B.qV,s,B.O,!1),s)}}
 A.avb.prototype={
 $1(a){var s=this.a
 if(s.c!=null)s.J(new A.ava(s,a))},
@@ -98122,7 +98122,7 @@ o=c.b
 n=c.a
 if(o!=null)p.push(new A.oC(o,n,B.DP,e))
 else p.push(A.D(n,e,e,e,B.DP,e,e))
-if(!c.e)B.b.I(p,A.b([B.ed,B.a4Z],q))
+if(!c.e)B.b.I(p,A.b([B.ed,B.a5_],q))
 p=A.aM(p,B.n,B.e,B.h,0,e)
 o=A.b([],q)
 for(n=t.Jn,m=s==null,l=c.d,k=0;k<4;++k){j=d[k]
@@ -98139,11 +98139,11 @@ F(a){var s,r,q,p,o,n,m,l,k,j,i,h,g,f,e,d=null,c=this.c
 if(c.length===0)return B.ah
 s=A.as(12)
 r=t.p
-q=A.b([B.a4O,B.aK],r)
+q=A.b([B.a4P,B.aK],r)
 for(p=c.length,o=0;o<c.length;c.length===p||(0,A.C)(c),++o){n=c[o]
 m=A.D(n.c,1,B.ad,d,B.a_W,d,d)
 l=n.dx
-if(l.length===0)l=B.a53
+if(l.length===0)l=B.a4s
 else{k=A.b([],r)
 j=A.X(l)
 i=j.i("hw<1>")
@@ -98254,7 +98254,7 @@ else if(p.r!=null)s=p.aeL()
 else{r=p.e
 s=r.a
 q=t.p
-q=A.b([A.ag(o,A.an(A.b([B.a4H,B.bY,A.D("GW"+s+"\u2013GW"+(s+r.b-1)+", easiest run first. Lower is better.",o,o,o,A.aU(o,o,B.o,o,o,o,o,o,o,o,o,12.5,o,o,o,o,o,!0,o,o,o,o,o,o,o,o),o,o)],q),B.x,B.e,B.h),B.j,B.i,o,o,o,o,o,o,B.qU,o,o,o)],q)
+q=A.b([A.ag(o,A.an(A.b([B.a4I,B.bY,A.D("GW"+s+"\u2013GW"+(s+r.b-1)+", easiest run first. Lower is better.",o,o,o,A.aU(o,o,B.o,o,o,o,o,o,o,o,o,12.5,o,o,o,o,o,!0,o,o,o,o,o,o,o,o),o,o)],q),B.x,B.e,B.h),B.j,B.i,o,o,o,o,o,o,B.qU,o,o,o)],q)
 s=r.d
 if(s.length!==0)q.push(new A.a3o(s,o))
 q.push(new A.Zw(r,o))
@@ -98294,7 +98294,7 @@ F(a){var s,r,q,p,o,n,m,l,k,j,i=null,h=this.c,g=A.X(h).i("aH<1>"),f=g.i("p.E"),e=
 h=A.as(12)
 g=A.b([new A.ct(0,B.aH,B.r.ar(0.05),B.cV,4)],t.E)
 f=t.p
-s=A.b([B.a4X,B.bX,A.D("Buy a gameweek before a run improves, so you own all of it.",i,i,i,A.aU(i,i,B.o,i,i,i,i,i,i,i,i,11.5,i,i,i,i,i,!0,i,i,i,i,i,i,i,i),i,i),B.aK],f)
+s=A.b([B.a4Y,B.bX,A.D("Buy a gameweek before a run improves, so you own all of it.",i,i,i,A.aU(i,i,B.o,i,i,i,i,i,i,i,i,11.5,i,i,i,i,i,!0,i,i,i,i,i,i,i,i),i,i),B.aK],f)
 r=A.Q(e,t.j9)
 B.b.I(r,d)
 q=r.length
@@ -98418,8 +98418,8 @@ B.b.I(l,s)}}return A.i2(n,B.aa,A.iV(A.an(l,B.b2,B.e,B.h),B.ct,!1,B.O),n)},
 QJ(a){var s=null,r=B.a4.ar(0.08),q=A.as(10),p=A.dh(B.a4.ar(0.3),1)
 return A.ag(s,A.D(a,s,s,s,B.os,s,s),B.j,s,s,new A.am(r,s,p,q,s,s,B.t),s,s,s,B.lT,B.fR,s,s,s)},
 ara(){var s=null
-return A.b([B.a5z,B.aL,A.D("Reading a squad out of an image needs a model running alongside the app, and this deployment has not got one. Enter your Team ID instead \u2014 it gets to the same place once the season is under way.",s,s,s,A.aU(s,s,B.o,s,s,s,s,s,s,s,s,13.5,s,s,s,s,1.5,!0,s,s,s,s,s,s,s,s),s,s),B.b6,A.ad9(B.N9,B.a4D,new A.aAx(this),A.wg(B.q,s,B.eN,s,s))],t.p)},
-aqS(){var s,r,q,p=null,o=A.as(12),n=A.dh(B.bB,1),m=t.p,l=A.b([B.a4A,B.aG],m)
+return A.b([B.a5z,B.aL,A.D("Reading a squad out of an image needs a model running alongside the app, and this deployment has not got one. Enter your Team ID instead \u2014 it gets to the same place once the season is under way.",s,s,s,A.aU(s,s,B.o,s,s,s,s,s,s,s,s,13.5,s,s,s,s,1.5,!0,s,s,s,s,s,s,s,s),s,s),B.b6,A.ad9(B.N9,B.a4E,new A.aAx(this),A.wg(B.q,s,B.eN,s,s))],t.p)},
+aqS(){var s,r,q,p=null,o=A.as(12),n=A.dh(B.bB,1),m=t.p,l=A.b([B.a4B,B.aG],m)
 for(s=0;s<3;++s){r=B.PN[s]
 q=A.D("\u2022",p,p,p,new A.j(!0,B.o,p,p,p,p,p,p,p,p,p,p,p,p,p,p,p,p,p,p,p,p,p,p,p,p),p,p)
 l.push(new A.au(B.qF,A.aM(A.b([q,B.as,new A.cu(1,B.ae,A.D(r,p,p,p,new A.j(!0,B.o,p,p,p,p,12,p,p,p,p,p,1.45,p,p,p,p,p,p,p,p,p,p,p,p,p),p,p),p)],m),B.x,B.e,B.h,0,p),p))}return A.ag(p,A.an(l,B.x,B.e,B.h),B.j,p,p,new A.am(B.i,p,n,o,p,p,B.t),p,p,p,p,B.bT,p,p,p)}}
@@ -98741,7 +98741,7 @@ i=A.cV(A.eK(n,B.m2,k,B.av,!1),44,k)
 h=A.b([A.D(""+l.f.length+" players",k,k,k,B.DU,k,k)],m)
 if(l.gIM()!=null){s=l.gIM()
 s.toString
-B.b.I(h,A.b([B.a4C,new A.oC(s,k,B.om,k),B.k3,A.fg(k,B.rT,B.a5,!1,k,k,k,k,k,k,k,k,k,k,k,k,k,k,new A.aDB(l),k,k,k)],m))}return A.ag(k,A.an(A.b([new A.au(B.Kt,j,k),i,new A.au(B.qW,A.aM(h,B.n,B.e,B.h,0,k),k),A.Po(B.bB,1)],m),B.n,B.e,B.h),B.j,B.i,k,k,k,k,k,k,k,k,k,k)},
+B.b.I(h,A.b([B.a4D,new A.oC(s,k,B.om,k),B.k3,A.fg(k,B.rT,B.a5,!1,k,k,k,k,k,k,k,k,k,k,k,k,k,k,new A.aDB(l),k,k,k)],m))}return A.ag(k,A.an(A.b([new A.au(B.Kt,j,k),i,new A.au(B.qW,A.aM(h,B.n,B.e,B.h,0,k),k),A.Po(B.bB,1)],m),B.n,B.e,B.h),B.j,B.i,k,k,k,k,k,k,k,k,k,k)},
 abu(){var s,r,q=this,p=null,o=q.f.length
 if(o===0){s=q.y!=null||q.z!=null||q.Q!=null||q.x.length!==0
 o=t.p
@@ -98976,7 +98976,7 @@ return A.cO(A.D(r,s,s,s,A.aU(s,s,this.a.d.ar(0.8),s,s,s,s,s,s,s,s,15,s,s,B.u,s,s
 $S:650}
 A.Z5.prototype={
 F(a){var s,r,q,p,o,n,m,l=null,k=this.c
-if(k.length===0)return A.D("No fixture",l,l,l,A.aU(l,l,B.o,l,l,l,l,l,l,l,l,10.5,B.bU,l,l,l,l,!0,l,l,l,l,l,l,l,l),l,l)
+if(k.length===0)return A.D("No games scheduled",l,l,l,A.aU(l,l,B.o,l,l,l,l,l,l,l,l,10.5,B.bU,l,l,l,l,!0,l,l,l,l,l,l,l,l),l,l)
 s=A.b([],t.p)
 for(k=A.hx(k,0,A.j7(4,"count",t.S),A.X(k).c),r=k.$ti,k=new A.bw(k,k.gC(0),r.i("bw<ac.E>")),r=r.i("ac.E");k.t();){q=k.d
 if(q==null)q=r.a(q)
@@ -99182,7 +99182,7 @@ else{r=A.D("Pick a new password. Signing in everywhere else will need it from no
 q=A.pw(B.c3,!0,n.f,A.QX(m,new A.fI(4,A.as(10),new A.aW(B.bC,1,B.B,-1)),m,m,m,m,m,m,!0,m,m,m,m,m,m,B.i,!0,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,m,"New password (8+ characters)",!0,!0,!1,m,m,m,m,m,m,m,m,m,m,m,m,m,m),m,m,m,m,1,!0,m,new A.aFL(n),m)
 p=n.r?m:n.gaqn()
 o=A.wg(B.q,m,B.KF,m,m)
-B.b.I(s,A.b([r,B.ee,q,B.aW,A.rh(n.r?B.Dc:B.a4V,p,o)],l))}return A.i2(m,B.aa,A.iV(A.an(s,B.b2,B.e,B.h),B.ct,!1,B.O),m)}}
+B.b.I(s,A.b([r,B.ee,q,B.aW,A.rh(n.r?B.Dc:B.a4W,p,o)],l))}return A.i2(m,B.aa,A.iV(A.an(s,B.b2,B.e,B.h),B.ct,!1,B.O),m)}}
 A.aFG.prototype={
 $0(){return this.a.w="This reset link is incomplete. Request a new one."},
 $S:0}
@@ -99429,8 +99429,8 @@ r=A.b([n,B.cj,s,B.aG,A.oc(A.kO(A.D(r,o,o,o,B.DR,B.a8,o),o),A.cQ(15e4,0,0),o),B.o
 if(p.w===B.er&&p.ch!=null){n=p.ch
 n.toString
 r.push(p.abc(n))}else r.push(p.abi())
-if(p.ax)B.b.I(r,A.b([B.aG,A.kv(B.a4G,p.gQI(),o)],q))
-if(!p.ax&&p.w!==B.er&&p.d.b==null)B.b.I(r,A.b([B.aW,A.kv(B.a4B,new A.aHs(p),o)],q))
+if(p.ax)B.b.I(r,A.b([B.aG,A.kv(B.a4H,p.gQI(),o)],q))
+if(!p.ax&&p.w!==B.er&&p.d.b==null)B.b.I(r,A.b([B.aW,A.kv(B.a4C,new A.aHs(p),o)],q))
 if(p.at&&!p.ax&&p.w!==B.er)B.b.I(r,A.b([B.b6,A.aM(A.b([A.bT(A.Po(B.bC,o),1,o),new A.au(B.ix,A.D("or",o,o,o,A.aU(o,o,B.o,o,o,o,o,o,o,o,o,12,o,o,o,o,o,!0,o,o,o,o,o,o,o,o),o,o),o),A.bT(A.Po(B.bC,o),1,o)],q),B.n,B.e,B.h,0,o),B.R,A.ED(B.ML,B.Lp,new A.aHt(p),A.EF(o,o,o,o,o,o,o,o,o,o,o,o,B.eN,o,o,o,o,o,o,o)),B.aL,A.D("Don't know your Team ID? Upload a screenshot instead \u2014 no account needed.",o,o,o,A.aU(o,o,B.o,o,o,o,o,o,o,o,o,11.5,o,o,o,o,o,!0,o,o,o,o,o,o,o,o),B.a8,o)],q))
 return A.cO(A.iV(new A.dz(B.hV,A.an(r,B.n,B.e,B.a6),o),B.KK,!1,B.O),o,o)},
 abi(){var s,r,q,p,o,n=this,m=null,l=t.p,k=A.b([],l)
@@ -99451,7 +99451,7 @@ s=l?m:n.gakP()
 k.push(A.cV(A.aSw(l?B.Yz:B.a5b,s),50,m))
 return A.oc(A.kO(A.an(k,B.b2,B.e,B.h),m),A.cQ(2e5,0,0),A.cQ(3e5,0,0))},
 abc(a){var s=this,r=null,q=A.as(16),p=A.dh(B.q.ar(0.2),1.5),o=A.b([new A.ct(0,B.aH,B.q.ar(0.08),B.hj,20)],t.E),n=A.ag(r,B.MW,B.j,r,r,new A.am(B.q,r,r,r,r,r,B.b0),r,52,r,r,r,r,r,52),m=A.D(a.b,r,r,r,B.ol,r,r),l=A.D(a.c,r,r,r,B.a_q,r,r),k=t.p,j=A.b([],k),i=a.d
-if(i.length!==0)B.b.I(j,A.b([A.D("\ud83c\udf0d "+i,r,r,r,B.dv,r,r),B.a4y],k))
+if(i.length!==0)B.b.I(j,A.b([A.D("\ud83c\udf0d "+i,r,r,r,B.dv,r,r),B.a4z],k))
 j.push(A.D("Rank #"+s.aeY(a.f),r,r,r,B.dv,r,r))
 q=A.aV5(A.oc(A.kO(A.ag(r,A.aM(A.b([n,B.YA,A.bT(A.an(A.b([m,B.ef,l,B.bY,A.aM(j,B.n,B.e,B.h,0,r)],k),B.x,B.e,B.h),1,r)],k),B.n,B.e,B.h,0,r),B.j,r,r,new A.am(B.i,r,p,q,o,r,B.t),r,r,r,r,B.ct,r,r,r),r),r,A.cQ(3e5,0,0)),0.1,r,r,0)
 p=s.ax
@@ -99476,13 +99476,13 @@ B.b.I(p,A.b([B.b6,A.ag(k,A.D(A.m(r)+" "+m+" to go",k,k,k,B.a_r,k,k),B.j,k,k,new 
 p=A.b([],o)
 if(l.at)p.push(A.cV(A.ad9(B.rR,B.Lo,new A.aHp(l),A.wg(B.q,k,k,k,k)),50,1/0))
 p.push(B.R)
-p.push(A.cV(A.ED(B.MD,B.a4M,new A.aHq(l),k),50,1/0))
+p.push(A.cV(A.ED(B.MD,B.a4N,new A.aHq(l),k),50,1/0))
 p.push(B.R)
 n=l.x!=null?new A.aHr(l):k
 p.push(A.cV(A.ED(B.mW,B.a5A,n,A.EF(k,k,k,k,k,k,k,k,k,B.o,k,k,k,k,k,new A.aW(B.o.ar(0.3),1,B.B,-1),k,k,k,k)),44,1/0))
 return A.an(A.b([q,A.bT(A.cO(A.oc(A.kO(A.iV(new A.dz(B.l1,A.an(A.b([new A.dz(B.hV,j,k),B.De,new A.w2(l.d,k),B.b6,new A.dz(B.hV,A.an(p,B.n,B.e,B.a6),k)],o),B.n,B.e,B.a6),k),B.dQ,!1,B.O),k),k,A.cQ(3e5,0,0)),k,k),1,k)],o),B.n,B.e,B.h)},
 abz(){var s=this,r=null,q=s.uK(),p=A.c3(B.Mm,B.c_.ar(0.8),r,56),o=s.x,n=t.p
-return A.an(A.b([q,A.bT(A.cO(A.oc(A.kO(A.iV(new A.dz(B.hV,A.an(A.b([p,B.ee,B.a5I,B.aK,A.D("FPL issues a new Manager ID each season, so "+A.m(o==null?"your saved ID":o)+" no longer resolves. Enter your new one to carry on.",r,r,r,B.ot,B.a8,r),B.De,A.cV(A.PD(B.MM,B.a4Q,s.gR_()),50,1/0),B.R,A.cV(A.aO7(B.a4W,new A.aHu(s),A.EF(r,r,r,r,r,r,r,r,r,B.o,r,r,r,r,r,new A.aW(B.o.ar(0.3),1,B.B,-1),r,r,r,r)),44,1/0)],n),B.n,B.e,B.a6),r),B.dQ,!1,B.O),r),r,A.cQ(3e5,0,0)),r,r),1,r)],n),B.n,B.e,B.h)},
+return A.an(A.b([q,A.bT(A.cO(A.oc(A.kO(A.iV(new A.dz(B.hV,A.an(A.b([p,B.ee,B.a5I,B.aK,A.D("FPL issues a new Manager ID each season, so "+A.m(o==null?"your saved ID":o)+" no longer resolves. Enter your new one to carry on.",r,r,r,B.ot,B.a8,r),B.De,A.cV(A.PD(B.MM,B.a4R,s.gR_()),50,1/0),B.R,A.cV(A.aO7(B.a4X,new A.aHu(s),A.EF(r,r,r,r,r,r,r,r,r,B.o,r,r,r,r,r,new A.aW(B.o.ar(0.3),1,B.B,-1),r,r,r,r)),44,1/0)],n),B.n,B.e,B.a6),r),B.dQ,!1,B.O),r),r,A.cQ(3e5,0,0)),r,r),1,r)],n),B.n,B.e,B.h)},
 abe(){var s,r=this,q=null,p=r.uK(),o=A.c3(B.dV,B.a4.ar(0.7),q,56),n=r.cx
 n=A.D(n==null?"Something went wrong":n,q,q,q,B.a33,B.a8,q)
 s=t.p
@@ -99770,7 +99770,7 @@ if(m){m=q.d
 o.push(new A.NY(m.a,m.b,q.e,m.c,new A.aIw(s,q),r))}o.push(s.aqx())
 if(s.r===B.fr)o.push(s.acW())
 n=n?r:q.Q.b
-if(n===!0)o.push(A.ag(r,B.a4Y,B.j,B.c_.ar(0.25),r,r,r,r,r,r,B.qX,r,r,1/0))
+if(n===!0)o.push(A.ag(r,B.a4Z,B.j,B.c_.ar(0.25),r,r,r,r,r,r,B.qX,r,r,1/0))
 o.push(A.bT(s.r===B.fr?s.amu(q,p===B.oS):s.aev(),1,r))
 return A.an(o,B.n,B.e,B.h)},
 amu(a,b){if(b&&a==null)return this.Wr()
@@ -100818,7 +100818,7 @@ s=n?o:p.gUi()
 r=n?B.YG:B.rR
 q=t.p
 s=A.b([A.cV(A.PD(r,A.D(n?"Building your squad\u2026":"Suggest a squad",o,o,o,B.ek,o,o),s),50,1/0)],q)
-if(p.e)B.b.I(s,A.b([B.aK,B.a4z],q))
+if(p.e)B.b.I(s,A.b([B.aK,B.a4A],q))
 n=p.w
 if(n!=null)B.b.I(s,A.b([B.R,A.D(n,o,o,o,B.a2_,B.a8,o),B.aG,A.kv(B.ff,p.gUi(),o)],q))
 return A.an(s,B.n,B.e,B.h)},
@@ -100961,7 +100961,7 @@ o=A.as(16)
 m=A.dh(B.r.ar(0.25),2)
 n=A.b([new A.ct(0,B.aH,B.r.ar(0.1),B.nv,8)],n)
 l=t.p
-return A.an(A.b([p,B.aW,A.ag(s,A.hg(new A.au(B.bT,A.an(A.b([B.a4x,B.R,new A.WW(r,q,s)],l),B.n,B.e,B.h),s),s,s,new A.WV(s),B.J),B.a2,s,s,new A.am(s,s,m,o,n,s,B.t),s,s,s,B.ix,s,s,s,s)],l),B.b2,B.e,B.h)}}
+return A.an(A.b([p,B.aW,A.ag(s,A.hg(new A.au(B.bT,A.an(A.b([B.a4y,B.R,new A.WW(r,q,s)],l),B.n,B.e,B.h),s),s,s,new A.WV(s),B.J),B.a2,s,s,new A.am(s,s,m,o,n,s,B.t),s,s,s,B.ix,s,s,s,s)],l),B.b2,B.e,B.h)}}
 A.adS.prototype={
 $2(a,b){return this.a.abb(a,b.b)},
 $S:658}
@@ -101355,7 +101355,7 @@ return A.a6L(this.b,s)},
 $S:0}
 A.yq.prototype={
 F(a){var s=this,r=null,q=A.bX(a,r,t.w).w,p=A.ag(r,r,B.j,r,r,new A.am(B.bC,r,r,A.as(2),r,r,B.t),r,4,r,r,r,r,r,40),o=A.D("Gameweek by gameweek".toUpperCase(),r,r,r,B.oj,r,r),n=s.adr(),m=A.D("Rules check".toUpperCase(),r,r,r,B.oj,r,r),l=s.ake(),k=A.D("The numbers".toUpperCase(),r,r,r,B.oj,r,r),j=s.c,i=s.IT("Transfers",""+j.c),h=j.d,g=t.p
-return A.ag(r,A.an(A.b([B.R,p,A.bT(A.eK(A.b([B.a4v,B.b6,new A.au(B.fQ,o,r),n,B.cj,new A.au(B.fQ,m,r),l,B.cj,new A.au(B.fQ,k,r),A.an(A.b([i,s.IT("Points hit",h===0?"None":"-"+h),s.IT("Gain before hit","+"+B.c.S(j.f,1)+" pts"),s.WO("Net gain","+"+B.c.S(j.e,1)+" pts",!0)],g),B.n,B.e,B.h)],g),B.qZ,r,B.O,!1),1,r)],g),B.n,B.e,B.h),B.j,r,r,B.pg,r,q.a.b*0.8,r,r,r,r,r,r)},
+return A.ag(r,A.an(A.b([B.R,p,A.bT(A.eK(A.b([B.a4w,B.b6,new A.au(B.fQ,o,r),n,B.cj,new A.au(B.fQ,m,r),l,B.cj,new A.au(B.fQ,k,r),A.an(A.b([i,s.IT("Points hit",h===0?"None":"-"+h),s.IT("Gain before hit","+"+B.c.S(j.f,1)+" pts"),s.WO("Net gain","+"+B.c.S(j.e,1)+" pts",!0)],g),B.n,B.e,B.h)],g),B.qZ,r,B.O,!1),1,r)],g),B.n,B.e,B.h),B.j,r,r,B.pg,r,q.a.b*0.8,r,r,r,r,r,r)},
 adr(){var s,r,q,p,o,n,m,l,k,j=null,i=A.as(12),h=t.p,g=A.b([A.aM(B.Py,B.n,B.e,B.h,0,j),B.J9],h)
 for(s=this.c.y,r=s.length,q=0;q<s.length;s.length===r||(0,A.C)(s),++q){p=s[q]
 o=B.c.S(p.b,1)
@@ -101424,7 +101424,7 @@ B.b.I(n,new A.Z(o,g.ganP(),A.X(o).i("Z<1,f>")))
 B.b.I(p,n)}q=q.Q
 if(q!=null)B.b.I(p,A.b([B.R,A.D(q,f,f,f,B.a_D,f,f)],r))
 p.push(B.R)
-p.push(new A.h9(B.hQ,f,f,A.ass(B.MZ,B.a4E,new A.atp(g,a),A.Ve(f,f,f,f,f,f,f,f,f,B.q,f,f,f,f,f,f,f,f,f,f)),f))
+p.push(new A.h9(B.hQ,f,f,A.ass(B.MZ,B.a4F,new A.atp(g,a),A.Ve(f,f,f,f,f,f,f,f,f,B.q,f,f,f,f,f,f,f,f,f,f)),f))
 return A.ag(f,A.an(A.b([d,new A.au(B.Ky,A.an(p,B.b2,B.e,B.h),f)],r),B.b2,B.e,B.h),B.j,f,f,new A.am(B.i,f,c,e,s,f,B.t),f,f,f,B.m4,f,f,f,f)},
 Xo(a,b,c){var s=null,r=A.D(a.toUpperCase(),s,s,s,B.a2N,s,s)
 return A.bT(A.an(A.b([r,B.bX,A.D(b,s,s,s,A.aU(s,s,c==null?B.P:c,s,s,s,s,s,s,s,s,14,s,s,B.G,s,s,!0,s,s,s,s,s,s,s,s),s,s)],t.p),B.x,B.e,B.h),1,s)},
@@ -101944,7 +101944,7 @@ A.a2j.prototype={}
 A.wd.prototype={
 F(a){var s=null,r=this.c
 r=r==null?s:"GoException: "+r.a
-return A.TG(!0,A.cO(A.an(A.b([B.a57,B.aW,A.D(r==null?"page not found":r,s,s,s,s,s,s),B.aW,new A.HY(new A.ad_(a),B.a4S,s)],t.p),B.n,B.dp,B.h),s,s),!1,B.bp,!0)}}
+return A.TG(!0,A.cO(A.an(A.b([B.a57,B.aW,A.D(r==null?"page not found":r,s,s,s,s,s,s),B.aW,new A.HY(new A.ad_(a),B.a4T,s)],t.p),B.n,B.dp,B.h),s,s),!1,B.bp,!0)}}
 A.ad_.prototype={
 $0(){return A.dB(this.a).eq(0,"/",null)},
 $S:0}
@@ -101992,7 +101992,7 @@ return A.c4(s,s,this.$ti.i("hh<1>").a(this.c).x,!1,s,s,!1,!0,s,s,s,s,s,s,s,s,s,s
 Bd(a,b,c,d){return this.$ti.i("hh<1>").a(this.c).CW.$4(a,b,c,d)}}
 A.tb.prototype={}
 A.wW.prototype={
-F(a){var s=null,r=A.aMP(s,s,s,s,B.a4w),q=this.c
+F(a){var s=null,r=A.aMP(s,s,s,s,B.a4x),q=this.c
 q=q==null?s:"GoException: "+q.a
 if(q==null)q="page not found"
 return A.i2(r,s,A.cO(A.an(A.b([new A.FY(q,s),A.kv(B.a5e,new A.ajs(a),s)],t.p),B.n,B.dp,B.h),s,s),s)}}
@@ -108240,11 +108240,11 @@ B.Hc=new A.fc(B.W,null,null,B.Uo,null)
 B.u=new A.fB(800)
 B.bU=new A.wj(1,"italic")
 B.a2u=new A.j(!0,B.i,null,null,null,null,11,B.u,B.bU,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a4U=new A.aQ("i",null,B.a2u,null,null,null,null,null,null)
-B.Hd=new A.fc(B.W,null,null,B.a4U,null)
+B.a4V=new A.aQ("i",null,B.a2u,null,null,null,null,null,null)
+B.Hd=new A.fc(B.W,null,null,B.a4V,null)
 B.a3H=new A.j(!0,B.i,null,null,null,null,11,B.u,null,null,null,null,1,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a4K=new A.aQ("G",null,B.a3H,null,null,null,null,null,null)
-B.He=new A.fc(B.W,null,null,B.a4K,null)
+B.a4L=new A.aQ("G",null,B.a3H,null,null,null,null,null,null)
+B.He=new A.fc(B.W,null,null,B.a4L,null)
 B.Hf=new A.Bm(null,null,null,null,null,null,null,null,null)
 B.eD=new A.vs(0,"none")
 B.dJ=new A.vs(1,"isTrue")
@@ -108763,8 +108763,8 @@ B.rc=new A.rd(!1,!1,!1,!0)
 B.ae=new A.Q3(0,"tight")
 B.L4=new A.cu(1,B.ae,B.la,null)
 B.a_f=new A.j(!0,B.P,null,null,null,null,13.5,null,null,null,null,null,1.35,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a4T=new A.aQ("Nothing urgent in your squad. No injuries, no doubts, no runs about to turn.",null,B.a_f,null,null,null,null,null,null)
-B.L8=new A.cu(1,B.ae,B.a4T,null)
+B.a4U=new A.aQ("Nothing urgent in your squad. No injuries, no doubts, no runs about to turn.",null,B.a_f,null,null,null,null,null,null)
+B.L8=new A.cu(1,B.ae,B.a4U,null)
 B.oo=new A.j(!0,B.P,null,null,null,null,18,B.u,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
 B.a5k=new A.aQ("Hold your transfer",null,B.oo,null,null,null,null,null,null)
 B.La=new A.cu(1,B.ae,B.a5k,null)
@@ -108825,8 +108825,8 @@ B.G=new A.fB(700)
 B.or=new A.j(!0,null,null,null,null,null,15,B.G,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
 B.a5q=new A.aQ("Rate my squad from a screenshot",null,B.or,null,null,null,null,null,null)
 B.Lo=new A.CF(B.a5q,null)
-B.a4J=new A.aQ("Rate my squad from a screenshot",null,null,null,null,null,null,null,null)
-B.Lp=new A.CF(B.a4J,null)
+B.a4K=new A.aQ("Rate my squad from a screenshot",null,null,null,null,null,null,null,null)
+B.Lp=new A.CF(B.a4K,null)
 B.J=new A.H(0,0)
 B.Lq=new A.PZ(B.J,B.J)
 B.Lr=new A.rj(null)
@@ -110396,16 +110396,16 @@ B.Ng=new A.bG(B.dV,13,B.a4,null,null)
 B.Ug=new A.au(B.r2,B.Ng,null)
 B.KD=new A.V(18,16,18,0)
 B.ZH=new A.j(!0,B.o,null,null,null,null,11.5,null,null,null,null,null,1.5,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a51=new A.aQ("Price and ownership are shown but not scored. Cheap is not the same as good, and high ownership is a risk if you don't own them and a shield if you do \u2014 neither is a point in a player's favour on its own.",null,B.ZH,null,null,null,null,null,null)
-B.Uh=new A.au(B.KD,B.a51,null)
+B.a52=new A.aQ("Price and ownership are shown but not scored. Cheap is not the same as good, and high ownership is a risk if you don't own them and a shield if you do \u2014 neither is a point in a player's favour on its own.",null,B.ZH,null,null,null,null,null,null)
+B.Uh=new A.au(B.KD,B.a52,null)
 B.JO=new A.V(0,0,4,0)
 B.ke=new A.j(!0,B.o,null,null,null,null,11,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a4u=new A.aQ("cached",null,B.ke,null,null,null,null,null,null)
-B.Ui=new A.au(B.JO,B.a4u,null)
+B.a4v=new A.aQ("cached",null,B.ke,null,null,null,null,null,null)
+B.Ui=new A.au(B.JO,B.a4v,null)
 B.JS=new A.V(0,24,0,24)
 B.DL=new A.j(!0,B.o,null,null,null,null,13,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a52=new A.aQ("The model returned an empty column. Try regenerating.",null,B.DL,null,null,null,null,null,null)
-B.Uk=new A.au(B.JS,B.a52,null)
+B.a53=new A.aQ("The model returned an empty column. Try regenerating.",null,B.DL,null,null,null,null,null,null)
+B.Uk=new A.au(B.JS,B.a53,null)
 B.K1=new A.V(0,5,8,0)
 B.LY=new A.b7(57699,"MaterialIcons",null,!1)
 B.Nd=new A.bG(B.LY,5,B.o,null,null)
@@ -110420,8 +110420,8 @@ B.oi=new A.j(!0,B.o,null,null,null,null,11,B.u,null,1.1,null,null,null,null,null
 B.a59=new A.aQ("ALTERNATIVES",null,B.oi,null,null,null,null,null,null)
 B.Up=new A.au(B.KG,B.a59,null)
 B.a1i=new A.j(!0,B.o,null,null,null,null,9,B.u,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a4R=new A.aQ("BENCH",null,B.a1i,null,null,null,null,null,null)
-B.Uq=new A.au(B.r2,B.a4R,null)
+B.a4S=new A.aQ("BENCH",null,B.a1i,null,null,null,null,null,null)
+B.Uq=new A.au(B.r2,B.a4S,null)
 B.ch=new A.Sj(0,"fill")
 B.b4=new A.Sj(1,"stroke")
 B.Ur=new A.oW(1/0)
@@ -110533,8 +110533,8 @@ B.MH=new A.bG(B.rN,17,B.fJ,null,null)
 B.Db=new A.bD(7,null,null,null)
 B.HS=new A.x(1,0.5411764705882353,0.3215686274509804,0,B.f)
 B.a2l=new A.j(!0,B.HS,null,null,null,null,14,B.u,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a4t=new A.aQ("This is not your squad yet",null,B.a2l,null,null,null,null,null,null)
-B.QT=s([B.MH,B.Db,B.a4t],t.p)
+B.a4u=new A.aQ("This is not your squad yet",null,B.a2l,null,null,null,null,null,null)
+B.QT=s([B.MH,B.Db,B.a4u],t.p)
 B.Wu=new A.xF(B.av,B.e,B.h,B.n,null,B.eo,null,0,B.QT,null)
 B.Wv=new A.FI(1333)
 B.nF=new A.FI(2222)
@@ -110803,8 +110803,8 @@ B.aG=new A.bD(null,8,null,null)
 B.YJ=new A.bD(null,9,null,null)
 B.YK=new A.bD(null,null,null,null)
 B.a_k=new A.j(!0,B.o,null,null,null,null,10,B.G,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a5_=new A.aQ("AVG",null,B.a_k,null,null,null,null,null,null)
-B.Ha=new A.fc(B.W,null,null,B.a5_,null)
+B.a50=new A.aQ("AVG",null,B.a_k,null,null,null,null,null,null)
+B.Ha=new A.fc(B.W,null,null,B.a50,null)
 B.YL=new A.bD(44,null,B.Ha,null)
 B.YM=new A.Gl(null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
 B.o6=new A.Ux(0,0,0,0,0,0,!1,!1,null,0)
@@ -111298,43 +111298,43 @@ B.DV=new A.j(!0,B.o,null,null,null,null,12.5,null,null,null,null,null,1.5,null,n
 B.a4p=new A.aQ("Every ranking here is built on ",null,B.DV,null,null,null,null,null,null)
 B.a4q=new A.aQ("Projections",null,B.kf,null,null,null,null,null,null)
 B.a4r=new A.aQ("How to choose",null,B.kg,null,null,null,null,null,null)
-B.a_S=new A.j(!0,null,null,null,null,null,null,B.am,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a4s=new A.aQ("Continue with Google",null,B.a_S,null,null,null,null,null,null)
-B.a4v=new A.aQ("Why this move",null,B.kf,null,null,null,null,null,null)
-B.a4w=new A.aQ("Page Not Found",null,null,null,null,null,null,null,null)
-B.ZY=new A.j(!0,B.i,null,null,null,null,12,B.u,null,2,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a4x=new A.aQ("BENCH",null,B.ZY,null,null,null,null,null,null)
-B.a4y=new A.aQ(" \xb7 ",null,B.ok,null,null,null,null,null,null)
-B.a4z=new A.aQ("Picking a legal \xa3100.0m squad and writing up the reasoning. This can take up to a minute the first time each day.",null,B.dv,B.a8,null,null,null,null,null)
-B.a4A=new A.aQ("For the best read",null,B.kg,null,null,null,null,null,null)
-B.a4B=new A.aQ("Already have an account? Sign in",null,null,null,null,null,null,null,null)
-B.a4C=new A.aQ(" \xb7 ranked by ",null,B.DU,null,null,null,null,null,null)
-B.a4D=new A.aQ("Use my Team ID",null,null,null,null,null,null,null,null)
-B.a4E=new A.aQ("Details",null,null,null,null,null,null,null,null)
-B.a4F=new A.aQ("Fantasy Premier League",null,null,null,null,null,null,null,null)
-B.a4G=new A.aQ("Cancel \u2014 back to my team",null,null,null,null,null,null,null,null)
-B.a4H=new A.aQ("Fixture ticker",null,B.oo,null,null,null,null,null,null)
-B.a_l=new A.j(!0,B.o,null,null,null,null,10,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a4I=new A.aQ("pts",null,B.a_l,null,null,null,null,null,null)
-B.a_A=new A.j(!0,B.o,null,null,null,null,13.5,null,null,null,null,null,1.45,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a4L=new A.aQ("The full workings behind every recommendation. Nothing here is needed to play well \u2014 the Actions tab already tells you what to do. This is for when you want to see why.",null,B.a_A,null,null,null,null,null,null)
-B.a4M=new A.aQ("Browse players",null,B.ek,null,null,null,null,null,null)
-B.a4N=new A.aQ("Sign in",null,B.E0,null,null,null,null,null,null)
-B.ff=new A.aQ("Try again",null,null,null,null,null,null,null,null)
-B.a4O=new A.aQ("NEXT FIXTURES",null,B.oi,null,null,null,null,null,null)
-B.a4P=new A.aQ("Use my squad instead",null,null,null,null,null,null,null,null)
-B.a4Q=new A.aQ("Enter new Manager ID",null,B.ek,null,null,null,null,null,null)
-B.a0b=new A.j(!0,B.i,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a4S=new A.aQ("Go to home page",null,B.a0b,null,null,null,null,null,null)
-B.a4V=new A.aQ("Set password and sign in",null,B.du,null,null,null,null,null,null)
-B.a4W=new A.aQ("Not now \u2014 browse players",null,null,null,null,null,null,null,null)
-B.a4X=new A.aQ("Runs about to change",null,B.kg,null,null,null,null,null,null)
-B.a4Y=new A.aQ("FPL API unreachable \u2014 showing the last data we cached.",null,B.DZ,null,null,null,null,null,null)
-B.a2s=new A.j(!0,B.o,null,null,null,null,9.5,null,B.bU,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a4Z=new A.aQ("lower is better",null,B.a2s,null,null,null,null,null,null)
-B.a50=new A.aQ("Go deeper",null,B.fe,null,null,null,null,null,null)
 B.a0v=new A.j(!0,B.o,null,null,null,null,10.5,null,B.bU,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.a53=new A.aQ("No fixture",null,B.a0v,null,null,null,null,null,null)
+B.a4s=new A.aQ("No games scheduled",null,B.a0v,null,null,null,null,null,null)
+B.a_S=new A.j(!0,null,null,null,null,null,null,B.am,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
+B.a4t=new A.aQ("Continue with Google",null,B.a_S,null,null,null,null,null,null)
+B.a4w=new A.aQ("Why this move",null,B.kf,null,null,null,null,null,null)
+B.a4x=new A.aQ("Page Not Found",null,null,null,null,null,null,null,null)
+B.ZY=new A.j(!0,B.i,null,null,null,null,12,B.u,null,2,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
+B.a4y=new A.aQ("BENCH",null,B.ZY,null,null,null,null,null,null)
+B.a4z=new A.aQ(" \xb7 ",null,B.ok,null,null,null,null,null,null)
+B.a4A=new A.aQ("Picking a legal \xa3100.0m squad and writing up the reasoning. This can take up to a minute the first time each day.",null,B.dv,B.a8,null,null,null,null,null)
+B.a4B=new A.aQ("For the best read",null,B.kg,null,null,null,null,null,null)
+B.a4C=new A.aQ("Already have an account? Sign in",null,null,null,null,null,null,null,null)
+B.a4D=new A.aQ(" \xb7 ranked by ",null,B.DU,null,null,null,null,null,null)
+B.a4E=new A.aQ("Use my Team ID",null,null,null,null,null,null,null,null)
+B.a4F=new A.aQ("Details",null,null,null,null,null,null,null,null)
+B.a4G=new A.aQ("Fantasy Premier League",null,null,null,null,null,null,null,null)
+B.a4H=new A.aQ("Cancel \u2014 back to my team",null,null,null,null,null,null,null,null)
+B.a4I=new A.aQ("Fixture ticker",null,B.oo,null,null,null,null,null,null)
+B.a_l=new A.j(!0,B.o,null,null,null,null,10,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
+B.a4J=new A.aQ("pts",null,B.a_l,null,null,null,null,null,null)
+B.a_A=new A.j(!0,B.o,null,null,null,null,13.5,null,null,null,null,null,1.45,null,null,null,null,null,null,null,null,null,null,null,null,null)
+B.a4M=new A.aQ("The full workings behind every recommendation. Nothing here is needed to play well \u2014 the Actions tab already tells you what to do. This is for when you want to see why.",null,B.a_A,null,null,null,null,null,null)
+B.a4N=new A.aQ("Browse players",null,B.ek,null,null,null,null,null,null)
+B.a4O=new A.aQ("Sign in",null,B.E0,null,null,null,null,null,null)
+B.ff=new A.aQ("Try again",null,null,null,null,null,null,null,null)
+B.a4P=new A.aQ("NEXT FIXTURES",null,B.oi,null,null,null,null,null,null)
+B.a4Q=new A.aQ("Use my squad instead",null,null,null,null,null,null,null,null)
+B.a4R=new A.aQ("Enter new Manager ID",null,B.ek,null,null,null,null,null,null)
+B.a0b=new A.j(!0,B.i,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
+B.a4T=new A.aQ("Go to home page",null,B.a0b,null,null,null,null,null,null)
+B.a4W=new A.aQ("Set password and sign in",null,B.du,null,null,null,null,null,null)
+B.a4X=new A.aQ("Not now \u2014 browse players",null,null,null,null,null,null,null,null)
+B.a4Y=new A.aQ("Runs about to change",null,B.kg,null,null,null,null,null,null)
+B.a4Z=new A.aQ("FPL API unreachable \u2014 showing the last data we cached.",null,B.DZ,null,null,null,null,null,null)
+B.a2s=new A.j(!0,B.o,null,null,null,null,9.5,null,B.bU,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
+B.a5_=new A.aQ("lower is better",null,B.a2s,null,null,null,null,null,null)
+B.a51=new A.aQ("Go deeper",null,B.fe,null,null,null,null,null,null)
 B.a_o=new A.j(!0,B.o,null,null,null,null,9,B.am,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
 B.a54=new A.aQ("xPts",null,B.a_o,null,null,null,null,null,null)
 B.E3=new A.aQ("Retry",null,null,null,null,null,null,null,null)

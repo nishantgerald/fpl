@@ -224,9 +224,22 @@ def _player_payload(element, team_short, projection, fcps_entry=None):
     them as such rather than presenting two numbers that look interchangeable.
     """
     status_code = str(element.get("status", "a"))
-    next_fixtures = (
-        projection["per_gameweek"][0]["fixtures"] if projection.get("per_gameweek") else []
-    )
+    # The whole run, not just the next gameweek.
+    #
+    # This read `per_gameweek[0]["fixtures"]` — the fixtures of one gameweek,
+    # which is normally exactly one match. Every client treats the field as a
+    # run (the players list takes four, the comparison screen takes five), so
+    # each of them silently rendered a single chip and the fixture context the
+    # screens were built to give simply was not there.
+    #
+    # Flattened in gameweek order, so a double gameweek contributes both of its
+    # matches and a blank contributes none — which is exactly what a reader
+    # scanning a run wants to see.
+    next_fixtures = [
+        fixture
+        for gameweek in projection.get("per_gameweek", [])
+        for fixture in gameweek.get("fixtures", [])
+    ]
     fcps_entry = fcps_entry or {}
     return {
         "id": int(element["id"]),
