@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Mapping, Sequence
 
+from . import advice as advice_mod
 from . import fcps as fcps_mod
 from . import fcps_llm, fpl_client, reconstruct, research
 from . import leagues as leagues_mod
@@ -216,59 +217,39 @@ def actions_for(
                 }
             )
 
-    # 2. Fixture swings, but only for clubs this manager is actually exposed
-    #    to. A swing at a club they do not own is trivia.
-    for player in squad:
-        swing = swings.get(int(player.get("team", 0)))
-        if not swing:
-            continue
-        owned = player.get("web_name")
-        if swing["direction"] == "worsening":
-            items.append(
-                {
-                    "priority": 3,
-                    "kind": "fixtures_worsening",
-                    "player": owned,
-                    "headline": f"{owned}'s fixtures turn from GW{swing['from_gameweek']}",
-                    "detail": swing["message"],
-                    "action": f"Sell before GW{swing['from_gameweek']}, "
-                    "while his run still looks good to everyone else.",
-                }
-            )
-
-    # 3. Buy targets: improving runs at clubs they do *not* own, ranked by the
-    #    projection of the best player available there.
-    for team_id, swing in swings.items():
-        if swing["direction"] != "improving":
-            continue
-        candidates = [
-            (float(projection.projections.get(int(e["id"]), {}).get("horizon_xpts") or 0), e)
-            for e in elements.values()
-            if int(e.get("team", 0)) == team_id
-            and int(e["id"]) not in my_ids
-            and str(e.get("status", "a")) == "a"
-        ]
-        if not candidates:
-            continue
-        best_value, best_element = max(candidates, key=lambda c: c[0])
-        if best_value <= 0:
-            continue
-        items.append(
-            {
-                "priority": 4,
-                "kind": "fixtures_improving",
-                "player": best_element.get("web_name"),
-                "headline": f"{teams.get(team_id, {}).get('name', swing['team'])}"
-                f"'s run eases from GW{swing['from_gameweek']}",
-                "detail": swing["message"],
-                "action": f"{best_element.get('web_name')} "
-                f"(£{int(best_element.get('now_cost', 0)) / 10:.1f}m) is their "
-                f"best option — {best_value:.0f} pts over {horizon} GWs. Buy a "
-                "gameweek early to own the whole run.",
-            }
+    # 2. Fixture swings, but only where selling actually gains points. A
+    #    worsening run is a fact about the club; whether to sell the player
+    #    depends on whether anything affordable outscores him, which is why this
+    #    lives in `advice` and returns nothing for an elite player nobody can
+    #    replace. See engine/advice.py:sell_advice.
+    items.extend(
+        advice_mod.sell_advice(
+            squad,
+            elements,
+            projection.projections,
+            swings,
+            my_ids,
+            horizon,
+            teams,
         )
+    )
+
+    # 3. Buy targets, as four shortlists answering four different questions
+    #    rather than one list of whoever happens to be at a club with an easing
+    #    run. Every candidate clears an absolute points-per-gameweek bar, which
+    #    the old version had none of.
+    shortlists = advice_mod.buy_shortlists(
+        elements,
+        projection.projections,
+        swings,
+        my_ids,
+        squad,
+        horizon,
+        teams=teams,
+    )
 
     # 4. Chips, valued against this squad rather than in the abstract.
+    schedule = advice_mod.schedule_shape(fpl_client.fixtures() or [], gameweek)
     chip_advice = []
     windows = chips_mod.windows(projection.data.get("chips", []))
     history = fpl_client.history(entry_id) or {}
@@ -291,7 +272,7 @@ def actions_for(
             value = chips_mod.bench_boost_value(
                 [projection.projections.get(pid, {}) for pid in bench_ids]
             )
-            detail = "Worth what your four bench players score."
+            detail = "Worth what your four bench players score today."
         elif chip["name"] == "freehit":
             squad_xi = sum(
                 float(projection.projections.get(int(p["id"]), {}).get("xpts_next") or 0)
@@ -302,7 +283,7 @@ def actions_for(
                 reverse=True,
             )[:11]
             value = chips_mod.free_hit_value(squad_xi * 11 / max(len(squad), 1), sum(best))
-            detail = "Biggest in a blank gameweek."
+            detail = ""
         elif chip["name"] == "wildcard":
             squad_total = sum(
                 float(projection.projections.get(int(p["id"]), {}).get("horizon_xpts") or 0)
@@ -316,7 +297,14 @@ def actions_for(
                 optimal = squad_total
             value = chips_mod.wildcard_value(squad_total, optimal, free_transfers)
             detail = "Measured against the best legal squad."
-        chip_advice.append(chips_mod.recommend(chip, value, gameweek, detail))
+        # The chip's own worth is only half the decision. The other half is
+        # whether the gameweek it exists for is on the calendar at all, and
+        # every version of this before said neither — a Free Hit "biggest in a
+        # blank gameweek" reads as though one is coming.
+        note = advice_mod.chip_schedule_note(chip["name"], schedule, teams)
+        chip_advice.append(
+            chips_mod.recommend(chip, value, gameweek, " ".join(filter(None, (detail, note))))
+        )
 
     items.sort(key=lambda i: (i["priority"], -len(i.get("detail", ""))))
 
@@ -333,6 +321,8 @@ def actions_for(
         "unavailable_reason": unavailable,
         "actions": items[:8],
         "chips": chip_advice,
+        "shortlists": shortlists,
+        "schedule": schedule,
     }
 
 
