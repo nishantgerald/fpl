@@ -89,6 +89,38 @@ xcngmn267qsc2elfkbvr35jcneexmcld._domainkey  CNAME  xcngmn267qsc2elfkbvr35jcneex
 
 Then set `SMTP_FROM=noreply@nishantgerald.com`.
 
+### DMARC
+
+There is no `_dmarc` record today. Nothing is broken without one — mail already
+authenticates, because DMARC passes on *either* SPF or DKIM alignment and the
+SES DKIM CNAMEs are live and verified. What a record adds is visibility: who is
+sending as `nishantgerald.com`, and a stated policy for receivers.
+
+**Send the reports to an address on this domain, not to Gmail directly.** When
+the `rua` mailbox is on a different domain than the DMARC record, RFC 7489
+requires the receiving domain to publish an authorisation record — Gmail does
+not do that for arbitrary domains, so strict reporters simply drop the reports
+and the record looks like it is working while producing nothing.
+
+1. **Squarespace → Email Forwarding**: forward `dmarc@nishantgerald.com` to
+   `nishantgerald1995@gmail.com`.
+2. **Squarespace → DNS → Custom records**, add a TXT record:
+
+   | Host | Type | Data |
+   |---|---|---|
+   | `_dmarc` | TXT | `v=DMARC1; p=none; rua=mailto:dmarc@nishantgerald.com; fo=1` |
+
+   Host is `_dmarc` alone — Squarespace appends the domain, and typing the full
+   name produces `_dmarc.nishantgerald.com.nishantgerald.com`, which silently
+   never resolves.
+
+3. Verify: `dig +short TXT _dmarc.nishantgerald.com`
+
+`p=none` is monitor-only and changes no delivery behaviour — the right place to
+start, because moving straight to `quarantine` on a domain whose SPF authorises
+only Mailgun risks filing legitimate mail as spam. After a few weeks of reports,
+`p=quarantine` is the natural next step.
+
 ## Optional
 
 | Variable | Effect |
