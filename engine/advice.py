@@ -493,7 +493,19 @@ def _rank(
         return sorted(pool, key=lambda c: -c["horizon_xpts"])
 
     if key == "value":
-        return sorted(candidates, key=lambda c: -c["xpts_per_million"])
+        # One per position. Points per million structurally favours the cheapest
+        # positions, so an unfiltered ranking returns three goalkeepers — true,
+        # and useless, because nobody frees up money by buying a second keeper.
+        # The question is where the cheap points are, and that has four answers.
+        ranked = sorted(candidates, key=lambda c: -c["xpts_per_million"])
+        seen: set[str] = set()
+        out = []
+        for candidate in ranked:
+            if candidate["position"] in seen:
+                continue
+            seen.add(candidate["position"])
+            out.append(candidate)
+        return out
 
     return []
 

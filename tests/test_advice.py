@@ -288,6 +288,31 @@ def test_each_shortlist_answers_a_different_question():
     assert "Hot" not in {p["player"] for p in by_key["differential"]["players"]}
 
 
+def test_the_value_list_does_not_return_three_goalkeepers():
+    """Points per million structurally favours the cheapest positions.
+
+    Against live data the unfiltered ranking returned two keepers and a
+    defender — true, and useless: nobody frees up money by buying a second
+    goalkeeper. "Where are the cheap points" has one answer per position.
+    """
+    elements = {
+        1: _element(1, "Keeper1", position=1, price=4.0),
+        2: _element(2, "Keeper2", position=1, price=4.0),
+        3: _element(3, "Back", position=2, price=4.5),
+        4: _element(4, "Mid", position=3, price=5.0),
+    }
+    projections = {i: _projection(20.0) for i in elements}
+
+    lists = advice.buy_shortlists(
+        elements, projections, {}, set(), [], horizon=5, teams=TEAMS
+    )
+    value = next(g for g in lists if g["key"] == "value")
+
+    positions = [p["position"] for p in value["players"]]
+    assert len(positions) == len(set(positions))
+    assert "GKP" in positions and "DEF" in positions and "MID" in positions
+
+
 def test_a_player_already_owned_is_never_a_buy_target():
     elements, projections = _buy_pool()
 
