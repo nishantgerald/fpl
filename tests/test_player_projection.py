@@ -211,6 +211,64 @@ def test_both_halves_of_a_double_carry_the_same_gameweek():
     assert [f["gameweek"] for f in _fixtures_for(projection)] == [7, 7]
 
 
+def _payload_for(projection):
+    with flask_app.app.test_request_context():
+        return flask_app._player_payload(
+            {"id": 1, "web_name": "Test", "status": "a", "element_type": 3},
+            "ARS",
+            projection,
+        )
+
+
+def test_the_fdr_total_says_how_many_matches_it_covers():
+    """A total on its own is on no scale anybody knows.
+
+    FDR is 1-5 per match; a total over three is 3-15, and the glossary that
+    every screen links to describes the first while the screens printed the
+    second. Dividing back to a per-match rating needs the divisor, and it is
+    not always three."""
+    projection = {
+        "per_gameweek": [
+            {"gameweek": 1, "fixtures": [{"opponent": "COV", "home": True, "fdr": 2}]},
+            {"gameweek": 2, "fixtures": [{"opponent": "AVL", "home": False, "fdr": 4}]},
+            {"gameweek": 3, "fixtures": [{"opponent": "CHE", "home": True, "fdr": 3}]},
+            {"gameweek": 4, "fixtures": [{"opponent": "SUN", "home": False, "fdr": 5}]},
+        ],
+    }
+
+    payload = _payload_for(projection)
+
+    assert payload["next_3_fdr"] == 9
+    assert payload["next_3_fdr_fixtures"] == 3
+
+
+def test_a_short_run_is_counted_short_rather_than_looking_easy():
+    """Two matches total less than three whatever the opponents, so without the
+    count the shorter run reads as the kinder one."""
+    projection = {
+        "per_gameweek": [
+            {"gameweek": 1, "fixtures": [{"opponent": "COV", "home": True, "fdr": 5}]},
+            {"gameweek": 2, "fixtures": []},
+            {"gameweek": 3, "fixtures": [{"opponent": "AVL", "home": False, "fdr": 5}]},
+        ],
+    }
+
+    payload = _payload_for(projection)
+
+    # 10 is lower than a 12 built from three fours, and a harder run than both.
+    assert payload["next_3_fdr"] == 10
+    assert payload["next_3_fdr_fixtures"] == 2
+
+
+def test_no_matches_at_all_counts_zero_rather_than_reading_as_the_easiest_run():
+    """A total of nought is the best possible score on a lower-is-better row.
+    The count is what lets a client tell "no fixtures" from "trivial fixtures"."""
+    payload = _payload_for({"per_gameweek": []})
+
+    assert payload["next_3_fdr"] == 0
+    assert payload["next_3_fdr_fixtures"] == 0
+
+
 def test_no_scheduled_matches_gives_an_empty_run_not_an_error():
     """Which is what lets the client say "No games scheduled" rather than
     rendering an empty strip that reads as a loading failure."""

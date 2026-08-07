@@ -248,6 +248,7 @@ def _player_payload(element, team_short, projection, fcps_entry=None):
         for fixture in gameweek.get("fixtures", [])
     ]
     fcps_entry = fcps_entry or {}
+    fdr_sum, fdr_counted = _next_n_fdr(projection, 3)
     return {
         "id": int(element["id"]),
         "name": f"{element.get('first_name', '')} {element.get('second_name', '')}".strip(),
@@ -272,7 +273,14 @@ def _player_payload(element, team_short, projection, fcps_entry=None):
         # a guess and an observation in the same confident words.
         "minutes_basis": projection.get("minutes_basis", "estimated"),
         "availability": projection.get("availability", 1.0),
-        "next_3_fdr": fcps_entry.get("next_3_fdr", _next_n_fdr(projection, 3)),
+        "next_3_fdr": fcps_entry.get("next_3_fdr", fdr_sum),
+        # How many matches that sum covers. Without it the client can only show
+        # the total, which is on no scale anybody knows: FDR is a 1-5 rating per
+        # match, and a total over three is 3-15. The glossary describes the
+        # former while every screen printed the latter under the same name.
+        "next_3_fdr_fixtures": int(
+            fcps_entry.get("fixtures_counted", fdr_counted) or 0
+        ),
         "next_fixtures": next_fixtures,
         "photo": f"{request.host_url}api/photo/{element.get('code', 0)}",
         # FCPS, restored. `fcps_fixtures` says how many fixtures the FDR term is
@@ -286,17 +294,24 @@ def _player_payload(element, team_short, projection, fcps_entry=None):
 
 
 def _next_n_fdr(projection, count):
-    """Sum of the FDRs of the next `count` fixtures actually scheduled.
+    """``(summed_difficulty, fixtures_counted)`` for the next `count` matches.
 
     Blanks contribute nothing rather than flattering the total, which is the bug
     the old fixed divisor of 15 hid.
+
+    The count travels with the sum for the same reason it does in
+    :func:`engine.fcps._fdr_window` — it is the honesty term. A sum on its own
+    cannot be compared between players: a team with two scheduled matches totals
+    less than a team with three whatever the opponents, so the shorter run reads
+    as the kinder one. Anything dividing this back into a per-fixture rating
+    needs to know what to divide by.
     """
     difficulties = [
         fixture["fdr"]
         for entry in projection.get("per_gameweek", ())
         for fixture in entry["fixtures"]
     ][:count]
-    return sum(difficulties)
+    return sum(difficulties), len(difficulties)
 
 
 def _safe_float(value, default=0.0):
