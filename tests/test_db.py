@@ -16,6 +16,7 @@ refuses to run against it.
 """
 
 import os
+import re
 import time
 
 import pytest
@@ -134,19 +135,30 @@ def pg(monkeypatch):
             "tests drop every table; point them at a throwaway database."
         )
     monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
-    with db.connect() as conn:
-        for table in (
-            "saved_squads", "fpl_cookies", "password_resets",
-            "fpl_links", "sessions", "users",
-        ):
-            conn.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
+    _drop_everything()
     accounts.init_db()
     yield
+    _drop_everything()
+
+
+def _schema_tables() -> list[str]:
+    """Every table the app creates, read off the schema itself.
+
+    Hardcoding the list meant it went stale the moment a table was added: the
+    LLM budget tables were not dropped between tests, so counts leaked from one
+    test into the next and the failures pointed at the wrong code.
+    """
+    names = []
+    for statement in db.SCHEMA:
+        match = re.search(r"CREATE TABLE IF NOT EXISTS (\w+)", statement)
+        if match:
+            names.append(match.group(1))
+    return names
+
+
+def _drop_everything() -> None:
     with db.connect() as conn:
-        for table in (
-            "saved_squads", "fpl_cookies", "password_resets",
-            "fpl_links", "sessions", "users",
-        ):
+        for table in _schema_tables():
             conn.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
 
 
@@ -272,3 +284,114 @@ def test_a_like_pattern_works_against_the_real_server(pg):
         remaining = conn.execute("SELECT email FROM users").fetchall()
 
     assert [row["email"] for row in remaining] == ["keep-me@example.com"]
+
+
+# ------------------------------------------------- the LLM budget, shared
+
+
+@postgres_only
+def test_the_daily_ceiling_is_shared_not_per_worker(pg, monkeypatch):
+    """On a dyno the file version counted nothing.
+
+    The filesystem is wiped on every restart, so a 250-a-day ceiling reset
+    several times a day — and each of the three gunicorn workers kept its own
+    idea of the total besides, multiplying the limit by the worker count.
+    """
+    from engine import llm_budget
+
+    monkeypatch.setattr(llm_budget, "DAILY_CALL_CEILING", 3)
+
+    for _ in range(3):
+        llm_budget._spend_one("vision")
+
+    with pytest.raises(llm_budget.BudgetExhausted):
+        llm_budget._spend_one("vision")
+
+    assert llm_budget.spent_today()["total"] == 3
+    assert llm_budget.remaining_today() == 0
+
+
+@postgres_only
+def test_concurrent_spends_cannot_overshoot_the_ceiling(pg, monkeypatch):
+    """The property that makes this worth doing at all.
+
+    Read-then-write lets two workers both see 249 and both spend. The check and
+    the increment are one statement precisely so the refusal is atomic — a
+    failure loop is the shape of traffic a ceiling exists to stop.
+    """
+    import concurrent.futures as futures
+
+    from engine import llm_budget
+
+    monkeypatch.setattr(llm_budget, "DAILY_CALL_CEILING", 10)
+
+    def spend():
+        try:
+            llm_budget._spend_one("vision")
+            return True
+        except llm_budget.BudgetExhausted:
+            return False
+
+    with futures.ThreadPoolExecutor(max_workers=12) as pool:
+        granted = sum(pool.map(lambda _: spend(), range(40)))
+
+    assert granted == 10, f"{granted} calls allowed against a ceiling of 10"
+    assert llm_budget.spent_today()["total"] == 10
+
+
+@postgres_only
+def test_the_breakdown_by_kind_is_kept(pg, monkeypatch):
+    from engine import llm_budget
+
+    monkeypatch.setattr(llm_budget, "DAILY_CALL_CEILING", 50)
+
+    llm_budget._spend_one("vision")
+    llm_budget._spend_one("vision")
+    llm_budget._spend_one("fcps")
+
+    assert llm_budget.spent_today()["by_kind"] == {"vision": 2, "fcps": 1}
+
+
+@postgres_only
+def test_the_hourly_client_throttle_is_shared(pg, monkeypatch):
+    from engine import llm_budget
+
+    monkeypatch.setattr(llm_budget, "CLIENT_CALLS_PER_HOUR", 3)
+
+    for _ in range(3):
+        llm_budget.check_client("198.51.100.7")
+
+    with pytest.raises(llm_budget.ClientThrottled):
+        llm_budget.check_client("198.51.100.7")
+
+    # Another caller is unaffected — it is a per-client share, not a global one.
+    llm_budget.check_client("198.51.100.8")
+
+
+@postgres_only
+def test_calls_outside_the_window_stop_counting(pg, monkeypatch):
+    """Otherwise the throttle is a lifetime ban rather than an hourly one."""
+    from engine import llm_budget
+
+    monkeypatch.setattr(llm_budget, "CLIENT_CALLS_PER_HOUR", 2)
+    llm_budget.check_client("198.51.100.9")
+    llm_budget.check_client("198.51.100.9")
+
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE llm_client_calls SET called_at = called_at - ?",
+            (llm_budget._CLIENT_WINDOW_SECONDS + 60,),
+        )
+
+    llm_budget.check_client("198.51.100.9")
+
+
+@postgres_only
+def test_a_status_read_never_raises_even_with_no_rows(pg):
+    from engine import llm_budget
+
+    assert llm_budget.spent_today() == {
+        "date": llm_budget._today(),
+        "total": 0,
+        "by_kind": {},
+    }

@@ -104,6 +104,26 @@ SCHEMA: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS llm_budget_day (
+        day TEXT PRIMARY KEY,
+        total INTEGER NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS llm_budget_kind (
+        day TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        total INTEGER NOT NULL,
+        PRIMARY KEY (day, kind)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS llm_client_calls (
+        client_id TEXT NOT NULL,
+        called_at REAL NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS saved_squads (
         user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         element_ids TEXT NOT NULL,
@@ -125,6 +145,11 @@ INDEXES: tuple[str, ...] = (
     # Sessions and reset tokens are looked up by user when revoking every
     # session after a password reset.
     "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id)",
+    # The throttle counts a client's calls inside a one-hour window on every
+    # model call, and prunes by timestamp; without these it is a full scan of a
+    # table that grows with traffic.
+    "CREATE INDEX IF NOT EXISTS idx_client_calls ON llm_client_calls (client_id, called_at)",
+    "CREATE INDEX IF NOT EXISTS idx_client_calls_age ON llm_client_calls (called_at)",
 )
 
 _PG_TYPES: tuple[tuple[str, str], ...] = (

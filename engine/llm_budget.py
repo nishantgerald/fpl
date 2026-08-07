@@ -45,6 +45,8 @@ import os
 import time
 from pathlib import Path
 
+from . import db
+
 # The ceiling is deliberately low. Legitimate traffic is one call per manager per
 # day for FCPS plus a handful of narrations; a few hundred covers real use with
 # room to spare, and anything past it is far likelier to be abuse than a good
@@ -93,6 +95,56 @@ def reserve(kind: str):
 
 
 def _spend_one(kind: str) -> None:
+    """Increment today's counter, or refuse. Shared across every worker."""
+    if db.is_postgres():
+        return _spend_one_shared(kind)
+    _spend_one_on_disk(kind)
+
+
+def _spend_one_shared(kind: str) -> None:
+    """The counter, in the database.
+
+    On a dyno the file version counted nothing: the filesystem is wiped on every
+    restart, so a 250-a-day ceiling silently reset several times a day and each
+    of the three workers kept its own idea of the total besides.
+
+    The check and the increment are one statement. Read-then-write would let two
+    workers both see 249 and both spend, which is exactly the shape of traffic a
+    ceiling exists to stop; `WHERE total < ceiling` inside the upsert makes the
+    refusal atomic, and returning no row *is* the refusal.
+    """
+    today = _today()
+    with db.connect() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO llm_budget_day (day, total) VALUES (?, 1)
+            ON CONFLICT (day) DO UPDATE SET total = llm_budget_day.total + 1
+            WHERE llm_budget_day.total < ?
+            RETURNING total
+            """,
+            (today, DAILY_CALL_CEILING),
+        ).fetchone()
+        if row is None:
+            raise BudgetExhausted(
+                f"The daily model-call ceiling ({DAILY_CALL_CEILING}) is spent."
+            )
+        # Reporting only, so a failure here must not undo a spend that already
+        # happened — the ceiling is the guarantee, the breakdown is a nicety.
+        conn.execute(
+            """
+            INSERT INTO llm_budget_kind (day, kind, total) VALUES (?, ?, 1)
+            ON CONFLICT (day, kind) DO UPDATE
+                SET total = llm_budget_kind.total + 1
+            """,
+            (today, kind),
+        )
+        # Yesterday's rows are dropped rather than accumulated, so the table
+        # cannot grow without bound.
+        conn.execute("DELETE FROM llm_budget_day WHERE day <> ?", (today,))
+        conn.execute("DELETE FROM llm_budget_kind WHERE day <> ?", (today,))
+
+
+def _spend_one_on_disk(kind: str) -> None:
     """Increment today's counter under an exclusive lock, or refuse."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     path = STATE_DIR / "calls.json"
@@ -133,6 +185,24 @@ def _spend_one(kind: str) -> None:
 
 def spent_today() -> dict:
     """Today's usage, for the status endpoint. Never raises."""
+    if db.is_postgres():
+        try:
+            with db.connect() as conn:
+                day = conn.execute(
+                    "SELECT total FROM llm_budget_day WHERE day = ?", (_today(),)
+                ).fetchone()
+                kinds = conn.execute(
+                    "SELECT kind, total FROM llm_budget_kind WHERE day = ?",
+                    (_today(),),
+                ).fetchall()
+            return {
+                "date": _today(),
+                "total": int(day["total"]) if day else 0,
+                "by_kind": {r["kind"]: int(r["total"]) for r in kinds},
+            }
+        except Exception:
+            # A status endpoint must not 500 because the database blinked.
+            return {"date": _today(), "total": 0, "by_kind": {}}
     try:
         raw = (STATE_DIR / "calls.json").read_text("utf-8")
         state = json.loads(raw)
@@ -180,6 +250,44 @@ def check_client(client_id: str) -> None:
     if not client_id:
         return
 
+    if db.is_postgres():
+        return _check_client_shared(client_id)
+    _check_client_on_disk(client_id)
+
+
+def _check_client_shared(client_id: str) -> None:
+    """The hourly throttle, in the database.
+
+    One statement again, for the same reason as the daily ceiling: counting and
+    then inserting lets two concurrent requests both pass a limit neither should
+    have. The insert only happens if the count inside the window is under the
+    limit, so no row returned means throttled.
+    """
+    now = time.time()
+    cutoff = now - _CLIENT_WINDOW_SECONDS
+    with db.connect() as conn:
+        # Prune globally rather than per client, or the table only ever grows.
+        conn.execute("DELETE FROM llm_client_calls WHERE called_at < ?", (cutoff,))
+        row = conn.execute(
+            """
+            INSERT INTO llm_client_calls (client_id, called_at)
+            SELECT ?, ?
+            WHERE (
+                SELECT COUNT(*) FROM llm_client_calls
+                WHERE client_id = ? AND called_at > ?
+            ) < ?
+            RETURNING called_at
+            """,
+            (client_id, now, client_id, cutoff, CLIENT_CALLS_PER_HOUR),
+        ).fetchone()
+    if row is None:
+        raise ClientThrottled(
+            f"This client has made {CLIENT_CALLS_PER_HOUR} model calls in the "
+            f"last hour; that is the limit."
+        )
+
+
+def _check_client_on_disk(client_id: str) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     path = STATE_DIR / "clients.json"
     now = time.time()
