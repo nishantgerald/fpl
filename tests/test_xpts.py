@@ -433,3 +433,112 @@ def test_shrinkage_leaves_an_established_player_alone(fixtures, teams, events):
     )
 
     assert projections[1]["horizon_xpts"] > projections[2]["horizon_xpts"]
+
+
+# ------------------------------------------- what "Nailed" is allowed to mean
+
+
+def _element(cost, owned, minutes=0, starts=0, status="a"):
+    return {
+        "id": 1, "web_name": "T", "element_type": 4, "team": 1,
+        "now_cost": cost, "selected_by_percent": str(owned),
+        "minutes": minutes, "starts": starts, "status": status,
+    }
+
+
+def _baseline(median_by_band):
+    return {band: median_by_band for band in xpts.OWNERSHIP_BANDS}
+
+
+def test_a_price_tag_alone_no_longer_makes_a_player_nailed():
+    """The bug the user caught.
+
+    Nicolas Jackson is £6.5m with 0.4% ownership and no Premier League minutes
+    — he was on loan — and the app told users he was "Nailed". The price prior
+    said so on its own: (65-40)/30 = 0.83, which cleared the 0.75 threshold.
+    Every player at £6.5m or above read the same way.
+    """
+    priced_like_a_starter = _element(cost=65, owned=0.4)
+
+    profile = xpts.minutes_profile(
+        priced_like_a_starter, team_games=0, ownership=_baseline(2.1)
+    )
+
+    assert xpts.minutes_risk(profile) != "low", (
+        "a price tag with no minutes and no owners is not a nailed starter"
+    )
+
+
+def test_the_market_can_only_pull_down_so_far():
+    """Ownership is a crowd opinion, not a team sheet. A genuine differential
+    should read as uncertain, not as a declared non-player."""
+    unloved = _element(cost=65, owned=0.0)
+
+    profile = xpts.minutes_profile(unloved, team_games=0, ownership=_baseline(2.1))
+
+    assert profile["p_start"] >= xpts.role_prior_from_price(65) * xpts.MARKET_FLOOR - 1e-9
+
+
+def test_a_well_owned_player_keeps_the_full_price_prior():
+    """João Pedro is £7.5m and 54% owned — the market agrees with the price, so
+    the correction must not penalise him."""
+    backed = _element(cost=75, owned=54.2)
+
+    profile = xpts.minutes_profile(backed, team_games=0, ownership=_baseline(13.1))
+
+    assert profile["p_start"] == pytest.approx(xpts.role_prior_from_price(75))
+
+
+def test_ownership_is_judged_against_its_own_price_band():
+    """An absolute threshold cannot tell a popular budget defender from an
+    avoided premium: 1.4% is high for £4.5m and conspicuously low for £9m."""
+    cheap_and_popular = _element(cost=45, owned=1.4)
+    dear_and_avoided = _element(cost=95, owned=1.4)
+
+    baseline = {band: 0.0 for band in xpts.OWNERSHIP_BANDS}
+    baseline[xpts._band_for(45)] = 0.3
+    baseline[xpts._band_for(95)] = 12.1
+
+    assert xpts.market_agreement(cheap_and_popular, baseline) == 1.0
+    assert xpts.market_agreement(dear_and_avoided, baseline) < 0.6
+
+
+def test_an_estimate_is_not_reported_as_an_observation():
+    """Before a ball is kicked there are no minutes, so the number is a price
+    tag corrected by a crowd opinion. Printing that identically to thirty
+    observed starts is lying by omission."""
+    no_football_yet = _element(cost=65, owned=5.0)
+    a_full_season = _element(cost=65, owned=5.0, minutes=2900, starts=34)
+
+    assert xpts.minutes_basis(
+        xpts.minutes_profile(no_football_yet, team_games=0)
+    ) == "estimated"
+    assert xpts.minutes_basis(
+        xpts.minutes_profile(a_full_season, team_games=0)
+    ) == "observed"
+
+
+def test_real_minutes_outweigh_the_market_once_they_exist():
+    """The correction is on the prior, so it fades as evidence arrives — a
+    player who is actually starting should not stay damped by low ownership."""
+    starting_but_unfancied = _element(cost=65, owned=0.1, minutes=2900, starts=34)
+
+    profile = xpts.minutes_profile(
+        starting_but_unfancied, team_games=0, ownership=_baseline(2.1)
+    )
+
+    assert profile["p_start"] > 0.75
+
+
+def test_the_baseline_ignores_players_who_have_left_the_league():
+    """Status 'u' players sit at near-zero ownership and would drag every median
+    down, making the market look more sceptical than it is."""
+    elements = [
+        _element(cost=65, owned=5.0),
+        _element(cost=65, owned=5.0),
+        _element(cost=65, owned=0.0, status="u"),
+    ]
+
+    baseline = xpts.ownership_baseline(elements)
+
+    assert baseline[xpts._band_for(65)] == 5.0

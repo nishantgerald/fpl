@@ -378,7 +378,80 @@ def role_prior_from_price(now_cost: float) -> float:
     return _clamp((now_cost - PRICE_FLOOR) / PRICE_ROLE_SPAN, 0.15, 0.90)
 
 
-def minutes_profile(player: Mapping, team_games: int) -> dict[str, float]:
+# Ownership bands for the market check below. Wide enough that each holds a
+# meaningful sample, narrow enough that a £4.5m bench defender is not compared
+# against a £13m striker.
+OWNERSHIP_BANDS: tuple[tuple[int, int], ...] = (
+    (0, 45), (45, 50), (50, 55), (55, 65), (65, 75), (75, 90), (90, 10_000)
+)
+
+# How far a price prior can be pulled down when the market disagrees with it.
+# Not to zero: ownership is a crowd opinion, not a team sheet, and a genuine
+# differential should be marked uncertain rather than declared a non-player.
+MARKET_FLOOR = 0.35
+
+
+def ownership_baseline(elements: Sequence[Mapping]) -> dict[tuple[int, int], float]:
+    """Median ownership per price band — what a price *normally* attracts.
+
+    Used to sanity-check the price prior. Computed per band rather than as one
+    global median because ownership rises steeply with price: a 1.4% budget
+    defender is popular for his price, while a 1.4% premium forward is being
+    conspicuously avoided, and an absolute threshold cannot tell those apart.
+    """
+    baseline: dict[tuple[int, int], float] = {}
+    for band in OWNERSHIP_BANDS:
+        low, high = band
+        owned = sorted(
+            _f(e.get("selected_by_percent"))
+            for e in elements
+            # 'u' is unavailable — transferred out of the league, or similar.
+            # Including them would drag every median toward zero.
+            if low <= int(e.get("now_cost") or 0) < high and e.get("status") != "u"
+        )
+        baseline[band] = owned[len(owned) // 2] if owned else 0.0
+    return baseline
+
+
+def _band_for(now_cost: int) -> tuple[int, int]:
+    for band in OWNERSHIP_BANDS:
+        if band[0] <= now_cost < band[1]:
+            return band
+    return OWNERSHIP_BANDS[-1]
+
+
+def market_agreement(
+    player: Mapping, baseline: Mapping[tuple[int, int], float] | None
+) -> float:
+    """How far three million managers agree with what the price implies.
+
+    The price prior asserts "FPL priced him to start". Ownership is the check on
+    that: if a player is priced like a starter and almost nobody has picked him,
+    the people who follow the club have concluded he is not starting, and the
+    price is stale or aspirational.
+
+    This is the signal that catches Nicolas Jackson — £6.5m, which the price
+    prior alone reads as nailed, against 0.4% ownership when the median at that
+    price is 2.1%. His own club-mate João Pedro is £7.5m and 54% owned, which is
+    what an actually-nailed forward looks like.
+
+    Returns 1.0 when the market agrees, down to MARKET_FLOOR when it does not.
+    """
+    if not baseline:
+        return 1.0
+    median = baseline.get(_band_for(int(player.get("now_cost") or 0)), 0.0)
+    if median <= 0:
+        # No comparable players to judge against; do not invent a correction.
+        return 1.0
+    ratio = _f(player.get("selected_by_percent")) / median
+    return _clamp(MARKET_FLOOR + (1.0 - MARKET_FLOOR) * min(ratio, 1.0), MARKET_FLOOR, 1.0)
+
+
+def minutes_profile(
+    player: Mapping,
+    team_games: int,
+    ownership: Mapping[tuple[int, int], float] | None = None,
+) -> dict[str, float]:
     """Expected minutes, start probability and 60-minute probability.
 
     This is the term FCPS omitted entirely, and it is the single largest driver
@@ -393,7 +466,10 @@ def minutes_profile(player: Mapping, team_games: int) -> dict[str, float]:
     preseason = int(team_games or 0) < EARLY_SEASON_GAMES
     team_games = effective_team_games(team_games)
     if team_games <= 0:
-        return {"p_start": 0.0, "p_play": 0.0, "p_60": 0.0, "minutes": 0.0}
+        return {
+            "p_start": 0.0, "p_play": 0.0, "p_60": 0.0,
+            "minutes": 0.0, "evidence": 0.0,
+        }
 
     starts = _f(player.get("starts"))
     minutes = _f(player.get("minutes"))
@@ -401,9 +477,14 @@ def minutes_profile(player: Mapping, team_games: int) -> dict[str, float]:
     p_start = _clamp(starts / team_games, 0.0, 1.0)
     mins_pg = minutes / team_games
 
+    evidence = 1.0
     if preseason:
         evidence = _clamp(minutes / PRESEASON_EVIDENCE_MINUTES, 0.0, 1.0)
+        # Price says what FPL expects; ownership says whether anyone believes
+        # it. Applied to the prior only — once real minutes exist they are the
+        # better evidence and this correction fades with `evidence`.
         prior = role_prior_from_price(_f(player.get("now_cost")))
+        prior *= market_agreement(player, ownership)
         p_start = evidence * p_start + (1.0 - evidence) * prior
         # Minutes have to follow the promotion, or a player we now expect to
         # start would still be scored as though he watched from the bench.
@@ -416,16 +497,39 @@ def minutes_profile(player: Mapping, team_games: int) -> dict[str, float]:
     sub_rate = _clamp((mins_pg - p_start * 90.0) / 30.0, 0.0, 1.0)
     p_play = _clamp(p_start + (1.0 - p_start) * sub_rate, 0.0, 1.0)
 
-    return {"p_start": p_start, "p_play": p_play, "p_60": p_60, "minutes": mins_pg}
+    return {
+        "p_start": p_start,
+        "p_play": p_play,
+        "p_60": p_60,
+        "minutes": mins_pg,
+        # How much real football is behind the numbers above, 0..1. Carried out
+        # so the UI can distinguish an estimate from an observation.
+        "evidence": evidence,
+    }
 
 
 def minutes_risk(profile: Mapping[str, float]) -> str:
+    """Coarse risk band. Unchanged semantics — several callers test == "high"."""
     p_start = profile.get("p_start", 0.0)
     if p_start >= 0.75:
         return "low"
     if p_start >= 0.45:
         return "medium"
     return "high"
+
+
+def minutes_basis(profile: Mapping[str, float]) -> str:
+    """Whether we have watched this player play, or are inferring it.
+
+    The risk band alone was being rendered to users as the word "Nailed", which
+    asserts a certainty the model does not have: before a ball is kicked there
+    are no minutes on record, so the estimate is a price tag corrected by a
+    crowd opinion. That may well be right, but it is an inference, and a screen
+    that prints it identically to thirty observed starts is lying by omission.
+
+    "observed" once there are real minutes behind it, "estimated" until then.
+    """
+    return "observed" if profile.get("evidence", 0.0) >= 0.25 else "estimated"
 
 
 def _per_90(player: Mapping, per90_key: str, total_key: str, team_games: int) -> float:
@@ -453,6 +557,7 @@ def project_player(
     teams: Mapping[int, Mapping],
     team_games: int,
     rate_priors: Mapping[str, Mapping[str, float]] | None = None,
+    ownership: Mapping[tuple[int, int], float] | None = None,
 ) -> dict:
     """Project one player over ``gameweeks``.
 
@@ -464,7 +569,7 @@ def project_player(
     team_id = int(player.get("team", 0))
     team_fixtures = fixture_index.get(team_id, {})
 
-    profile = minutes_profile(player, team_games)
+    profile = minutes_profile(player, team_games, ownership)
     mins_frac = _clamp(profile["minutes"] / 90.0, 0.0, 1.0)
 
     xg90 = _per_90(player, "expected_goals_per_90", "expected_goals", team_games)
@@ -598,6 +703,7 @@ def project_player(
         "per_gameweek": per_gameweek,
         "availability": round(availability_factor(player, 0), 3),
         "minutes_risk": minutes_risk(profile),
+        "minutes_basis": minutes_basis(profile),
         "p_start": round(profile["p_start"], 3),
         "xpts_per_million": round(horizon / (price / 10.0), 3),
     }
@@ -692,10 +798,11 @@ def project_all(
     team_index = build_team_index(teams)
     games = team_games_played(teams, events)
     priors = position_rate_priors(elements)
+    ownership = ownership_baseline(elements)
 
     return {
         int(p["id"]): project_player(
-            p, gameweeks, fixture_index, team_index, games, priors
+            p, gameweeks, fixture_index, team_index, games, priors, ownership
         )
         for p in elements
         if POSITIONS.get(int(p.get("element_type", 0))) in ("GKP", "DEF", "MID", "FWD")

@@ -260,6 +260,10 @@ def _player_payload(element, team_short, projection, fcps_entry=None):
         "xpts_horizon": projection.get("horizon_xpts", 0.0),
         "xpts_per_million": projection.get("xpts_per_million", 0.0),
         "minutes_risk": projection.get("minutes_risk", "medium"),
+        # Whether that risk band rests on observed minutes or on an
+        # inference from price and ownership. The client must not print
+        # a guess and an observation in the same confident words.
+        "minutes_basis": projection.get("minutes_basis", "estimated"),
         "availability": projection.get("availability", 1.0),
         "next_3_fdr": fcps_entry.get("next_3_fdr", _next_n_fdr(projection, 3)),
         "next_fixtures": next_fixtures,
