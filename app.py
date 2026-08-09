@@ -2095,6 +2095,21 @@ def flutter_index():
 
 @app.route("/app/<path:filename>")
 def flutter_static(filename):
+    """A built file, or the app shell for one of its own routes.
+
+    The client routes on the path — /app/players, /app/actions — so anyone who
+    bookmarks a page, refreshes on one, or is sent a link to one asks this
+    server for a file that was never built, and got Flask's 404 back. The app
+    only ever looked whole if you entered through the front door and never
+    reloaded, which is not how anyone uses a site they have open on a desktop.
+
+    A missing *asset* must still 404. Answering a dead .js or .png with HTML
+    turns a clear miss into a parse error somewhere further along, so the
+    fallback is limited to extensionless paths, which is what the routes are.
+    """
+    target = os.path.join(FLUTTER_BUILD_DIR, filename)
+    if not os.path.isfile(target) and "." not in os.path.basename(filename):
+        return send_from_directory(FLUTTER_BUILD_DIR, "index.html")
     return send_from_directory(FLUTTER_BUILD_DIR, filename)
 
 
