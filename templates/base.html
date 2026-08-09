@@ -3,17 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}FPL projections{% endblock %}</title>
+<title>{% block title %}Gameweek Zero — FPL projections{% endblock %}</title>
 <meta name="description" content="{% block description %}Expected points projections for every Fantasy Premier League player.{% endblock %}">
 <link rel="canonical" href="{{ canonical }}">
 
+{# Poppins, as the brand kit specifies. display=swap so a slow font never
+   blocks the text — these pages are read by crawlers and by people on phones. #}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700;900&display=swap">
+
 {# Open Graph, so a link shared into a group chat renders as something. #}
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="FPL Companion">
+<meta property="og:site_name" content="Gameweek Zero">
 <meta property="og:title" content="{{ self.title() }}">
 <meta property="og:description" content="{{ self.description() }}">
 <meta property="og:url" content="{{ canonical }}">
-<meta name="twitter:card" content="summary">
+<meta name="twitter:card" content="summary_large_image">
+<meta property="og:image" content="{{ url_for('static', filename='brand/og-card.png', _external=True) }}">
+<meta name="twitter:image" content="{{ url_for('static', filename='brand/og-card.png', _external=True) }}">
+<meta name="theme-color" content="#37003C">
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='brand/favicon.svg') }}">
 
 {# One stylesheet, inlined. These pages exist to be read fast by crawlers and
    by people on phones; a request for 8kb of CSS is a request too many, and
@@ -24,12 +34,13 @@
   --ink:#1a1a2e; --muted:#6b7280; --line:#e6e8ec; --bg:#f4f5f7;
 }
 *{box-sizing:border-box}
-body{margin:0;font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg)}
+body{margin:0;font:16px/1.55 Poppins,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg)}
 a{color:#7a1b86;text-decoration:none}
 a:hover{text-decoration:underline}
 header.site{background:var(--purple);color:#fff;padding:14px 20px}
 header.site .inner{max-width:960px;margin:0 auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-header.site .logo{background:var(--green);color:var(--purple);font-weight:900;font-size:11px;padding:6px 8px;border-radius:6px;letter-spacing:-.5px}
+header.site .logo{display:flex;align-items:center;opacity:1}
+header.site .logo img{display:block;height:30px;width:auto}
 header.site a{color:#fff;font-size:14px;opacity:.85}
 header.site a:hover{opacity:1}
 header.site .cta{margin-left:auto;background:var(--green);color:var(--purple);font-weight:700;padding:7px 14px;border-radius:8px;opacity:1}
@@ -83,7 +94,10 @@ footer{border-top:1px solid var(--line);margin-top:40px;padding-top:18px;color:v
 <body>
 <header class="site">
   <div class="inner">
-    <span class="logo">FPL</span>
+    <a class="logo" href="/" aria-label="Gameweek Zero">
+      <img src="{{ url_for('static', filename='brand/lockup-horizontal-dark.svg') }}"
+           alt="Gameweek Zero" height="30">
+    </a>
     <a href="/projections">Projections</a>
     <a href="/captain">Captain</a>
     <a href="/fixtures">Fixtures</a>

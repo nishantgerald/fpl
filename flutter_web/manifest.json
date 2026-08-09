@@ -1,11 +1,11 @@
 {
-    "name": "fpl_flutter",
-    "short_name": "fpl_flutter",
+    "name": "Gameweek Zero",
+    "short_name": "Gameweek Zero",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "FPL Fantasy Premier League App",
+    "background_color": "#37003C",
+    "theme_color": "#37003C",
+    "description": "Rules-legal FPL transfer advice, expected points and fixture analysis.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

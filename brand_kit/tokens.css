@@ -1,0 +1,33 @@
+/* Gameweek Zero — design tokens v1.0 */
+:root {
+  --gw0-purple:       #37003C;
+  --gw0-purple-lift:  #4A0F50;
+  --gw0-purple-line:  #6B3A73;
+  --gw0-mint:         #00FF87;
+  --gw0-mint-onlight: #00B85F;
+  --gw0-cyan:         #04F5FF;
+  --gw0-ink:          #0E0A12;
+  --gw0-lilac:        #B98FC0;
+  --gw0-white:        #FFFFFF;
+
+  --gw0-surface:      var(--gw0-purple);
+  --gw0-surface-2:    var(--gw0-purple-lift);
+  --gw0-accent:       var(--gw0-mint);
+  --gw0-highlight:    var(--gw0-cyan);
+  --gw0-text:         var(--gw0-white);
+  --gw0-text-muted:   var(--gw0-lilac);
+
+  --gw0-font: 'Poppins', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --gw0-weight-bold: 700;
+  --gw0-weight-medium: 500;
+  --gw0-weight-regular: 400;
+
+  --gw0-radius-tile: 22%;   /* icon tiles: 88/400 */
+  --gw0-radius-card: 12px;
+  --gw0-radius-control: 8px;
+}
+
+/* Light surfaces: swap mint for the darker variant so it passes contrast on white. */
+@media (prefers-color-scheme: light) {
+  :root { --gw0-accent-onlight: var(--gw0-mint-onlight); }
+}
