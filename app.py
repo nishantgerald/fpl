@@ -24,6 +24,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
 import time
@@ -40,6 +41,7 @@ from flask import (
     request,
     send_from_directory,
 )
+from flask.json.provider import DefaultJSONProvider
 from flask_cors import CORS
 
 from engine import captain as captain_engine
@@ -71,6 +73,37 @@ load_dotenv()
 accounts.init_db()
 
 app = Flask(__name__)
+
+
+class _FiniteJSONProvider(DefaultJSONProvider):
+    """Serialise NaN and Infinity as null, because JSON has no other option.
+
+    Python's json module emits bare `NaN`, which is a Python extension and not
+    JSON: `JSON.parse` and Dart's `jsonDecode` both reject it outright. The
+    model metadata behind /api/engines carries NaN for metrics that were never
+    computed (a baseline with no transfer calls, say), and one of those made the
+    whole capability response unparseable — so the client silently fell back to
+    "no engines, no FCPS" and quietly dropped two features from the Transfers
+    tab. Sanitising at the boundary means no endpoint can ship invalid JSON.
+    """
+
+    @staticmethod
+    def _finite(value):
+        if isinstance(value, float):
+            return value if math.isfinite(value) else None
+        if isinstance(value, dict):
+            return {k: _FiniteJSONProvider._finite(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_FiniteJSONProvider._finite(v) for v in value]
+        return value
+
+    def dumps(self, obj, **kwargs):
+        # allow_nan=False would raise instead, turning a cosmetic gap in the
+        # metrics into a 500. Null is the honest representation of "no value".
+        return super().dumps(self._finite(obj), allow_nan=False, **kwargs)
+
+
+app.json = _FiniteJSONProvider(app)
 
 # Restrict CORS to the API surface and the origins that actually use it. The old
 # `CORS(app)` opened every route to every origin.

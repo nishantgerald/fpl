@@ -245,6 +245,37 @@ def test_hold_cites_the_best_rejected_move_when_hits_kill_it(
         assert "Bank the transfer" in result["hold"]["reason"]
 
 
+def test_hold_does_not_deny_the_plans_shown_beside_it(
+    squad, elements, projections, gameweeks
+):
+    """The client renders the hold card under the plans, not instead of them.
+
+    Before this, `best_rejected` was None whenever plans existed, so the reason
+    fell through to "No transfer improves your projected points" — printed
+    directly beneath a card recommending a +14 pt move.
+    """
+    result = _optimise(squad, elements, projections, gameweeks, bank=100)
+    assert result["plans"], "fixture must produce plans for this to mean anything"
+
+    reason = result["hold"]["reason"]
+    assert "No transfer improves" not in reason
+    # It has to name what holding costs, which is the top plan's gain.
+    assert f"{result['plans'][0]['net_gain']:.1f} pts" in reason
+
+
+def test_hold_still_says_nothing_improves_when_there_is_nothing_to_cite():
+    """The original wording is correct in the case it was written for.
+
+    That case is narrower than "no plans": with no plans there is usually still
+    a rejected move worth naming. This is the genuinely empty one.
+    """
+    hold = optimizer._hold(
+        baseline=50.0, detail=[], best_rejected=None, free_transfers=1,
+        top_plan=None,
+    )
+    assert "No transfer improves" in hold["reason"]
+
+
 # ------------------------------------------------------------------ determinism
 
 

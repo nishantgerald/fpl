@@ -154,7 +154,10 @@ def optimise(
 
     return {
         "plans": top,
-        "hold": _hold(baseline, baseline_detail, best_rejected, free_transfers),
+        "hold": _hold(
+            baseline, baseline_detail, best_rejected, free_transfers,
+            top[0] if top else None,
+        ),
         "baseline_xpts": round(baseline, 2),
     }
 
@@ -523,13 +526,27 @@ def _hold(
     detail: Sequence[Mapping],
     best_rejected: Mapping | None,
     free_transfers: int,
+    top_plan: Mapping | None = None,
 ) -> dict:
     """The do-nothing option, stated as a recommendation rather than a failure.
 
     Most tools only ever suggest moves, because suggesting moves feels like
     value. Holding is frequently correct, and saying so is what earns trust.
+
+    The card is shown *alongside* the plans, not only instead of them, so the
+    reason has to hold up next to whatever is recommended above it. Claiming
+    nothing improves the squad while a card overhead offers +14 pts reads as a
+    broken page, and rightly.
     """
-    if best_rejected:
+    if top_plan:
+        banked = min(5, free_transfers + 1)
+        reason = (
+            f"Holding gives up the {top_plan['net_gain']:.1f} pts the "
+            f"recommended move projects, and banks the transfer — you'd have "
+            f"{banked} next gameweek. Worth it if you'd rather wait for team "
+            f"news, or save up for a bigger move."
+        )
+    elif best_rejected:
         out_name = best_rejected["transfers"][0]["out"]["web_name"]
         in_name = best_rejected["transfers"][0]["in"]["web_name"]
         banked = min(5, free_transfers + 1)
