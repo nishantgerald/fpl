@@ -483,22 +483,27 @@ def current_gameweek() -> int | None:
 # ---------------------------------------------------------------- photos
 
 
+# Cached in place of the bytes when the CDN has no photo for a player, so a
+# miss is remembered rather than re-fetched on every request.
+_MISSING = object()
+
+
 class _PhotoCache:
     """Bounded LRU for player photos. Content is immutable, so no TTL."""
 
     def __init__(self, size: int = PHOTO_CACHE_SIZE):
-        self._data: OrderedDict[int, bytes] = OrderedDict()
+        self._data: OrderedDict[int, object] = OrderedDict()
         self._size = size
         self._lock = threading.Lock()
 
-    def get(self, code: int) -> bytes | None:
+    def get(self, code: int):
         with self._lock:
             if code not in self._data:
                 return None
             self._data.move_to_end(code)
             return self._data[code]
 
-    def put(self, code: int, value: bytes) -> None:
+    def put(self, code: int, value) -> None:
         with self._lock:
             self._data[code] = value
             self._data.move_to_end(code)
@@ -509,22 +514,61 @@ class _PhotoCache:
 _photos = _PhotoCache()
 
 
+# Where a player photo might live, in the order worth trying.
+#
+# The Premier League moved its player art to a season-stamped path and dropped
+# the "p" prefix from the filename: p223094.png under /premierleague became
+# 223094.png under /premierleague25. The old path was not retired, and the two
+# do not hold the same players — of 581 elements, 410 are only reachable at the
+# new path and 67 only at the old one. Asking for one and giving up is how two
+# hundred players ended up with no face.
+#
+# Measured 2026-08-09: old path alone 380/581 (65%), new path alone 410 (71%),
+# both in this order 477 (82%). The remaining 104 are absent from the CDN
+# altogether — mostly deadline-day signings and academy call-ups — and FPL's own
+# site shows a placeholder for them too.
+#
+# The season segment changes each August. When it does, add the new one at the
+# top rather than editing this one: a player who has not been rephotographed is
+# still served from the older path.
+PHOTO_SOURCES: tuple[str, ...] = (
+    "https://resources.premierleague.com/premierleague25/photos/players"
+    "/110x140/{code}.png",
+    "https://resources.premierleague.com/premierleague/photos/players"
+    "/110x140/p{code}.png",
+)
+
+
 def photo(code: int) -> bytes | None:
+    """The player's headshot, or None if the CDN has no picture of them.
+
+    Tries each source in :data:`PHOTO_SOURCES` in turn. A miss is cached as
+    well as a hit: without that, every player the league has never
+    photographed costs two upstream requests on every page that lists them.
+    """
     cached = _photos.get(code)
     if cached is not None:
-        return cached
-    url = (
-        "https://resources.premierleague.com/premierleague/photos/players"
-        f"/110x140/p{code}.png"
-    )
-    try:
-        response = requests.get(url, timeout=TIMEOUT)
-    except Exception:
-        return None
-    if response.status_code != 200:
-        return None
-    _photos.put(code, response.content)
-    return response.content
+        return None if cached is _MISSING else cached
+
+    answered = True
+    for template in PHOTO_SOURCES:
+        try:
+            response = requests.get(template.format(code=code), timeout=TIMEOUT)
+        except Exception:
+            # A timeout says nothing about whether the picture exists, so this
+            # source gets no vote either way.
+            answered = False
+            continue
+        if response.status_code == 200 and response.content:
+            _photos.put(code, response.content)
+            return response.content
+
+    # Only remember the miss if every source actually answered. Caching one
+    # because the network was down would blank that player until the process
+    # restarts.
+    if answered:
+        _photos.put(code, _MISSING)
+    return None
 
 
 def clear_caches() -> None:

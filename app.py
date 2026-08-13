@@ -2074,7 +2074,15 @@ def player_photo(code):
     """
     content = fpl_client.photo(code)
     if content is None:
-        return "", 404
+        # Cached too, and briefly. Roughly one player in six has no picture on
+        # the league's CDN, and an uncached 404 means every browser re-asks for
+        # every one of them on every page that lists them. Short, because a
+        # new signing gets photographed within days.
+        return Response(
+            "",
+            status=404,
+            headers={"Cache-Control": "public, max-age=21600"},
+        )
     return Response(
         content,
         mimetype="image/png",
