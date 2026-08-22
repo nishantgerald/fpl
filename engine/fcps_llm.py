@@ -162,6 +162,12 @@ def player_row(
         "price": round(int(element.get("now_cost", 0)) / 10, 1),
         "total_points": int(element.get("total_points", 0)),
         "form": _num(element.get("form")),
+        # Whether the zero above means "played and scored nothing" or "has not
+        # kicked a ball yet". Without it every player reads as a catastrophic
+        # underperformer for the whole of the first gameweek, and the advice
+        # said so: "zero points, zero form" about a man whose fixture had not
+        # been played.
+        "minutes": int(element.get("minutes", 0) or 0),
         "next_3_fdr": int(fcps_entry.get("next_3_fdr", 0)),
         "ict_index": _num(element.get("ict_index")),
         "fcps": round(float(fcps_entry.get("fcps", 0.0)), 1),
@@ -264,6 +270,15 @@ Recommend transfers for this gameweek. Constraints you must respect:
   bank. Say so explicitly when a move is tight.
 - Transfers in and out must be the same position.
 - If no transfer is clearly worth making, say so and recommend holding.
+- Mins is minutes played so far this season. A player on 0 minutes has not
+  played yet, and their points, form and ICT are shown as "—" rather than 0
+  because the season has not established them — not because they played badly.
+  Never describe such a player as having blanked, scored zero, underperformed
+  or been dropped, and never give a "—" as a reason to sell. Judge them on
+  price, fixture difficulty and what is in the reference notes instead.
+- Fixtures within a gameweek are played across several days, so early in a
+  gameweek most players have no minutes yet. That is normal and is not
+  evidence about any of them.
 
 Structure your response as markdown, grouped by position, in this shape:
 
@@ -274,6 +289,7 @@ Structure your response as markdown, grouped by position, in this shape:
   Reason: one sentence.
 * **In:** Name (GKP, TEAM) — 4.5
   Total points 79 · Form 4.8 · Next 3 FDR 7 · FCPS 426.0 · ICT 51.6
+  (write "Yet to play" in place of any figure shown as "—")
 
 ...repeat for Defenders, Midfielders and Forwards, omitting any position where
 you don't recommend a change...
@@ -299,8 +315,8 @@ def _table(rows: Sequence[Mapping]) -> str:
         return "_(none)_"
 
     header = (
-        "| Name | Pos | Team | £ | Pts | Form | FDR3 | ICT | FCPS | Status |"
-        "\n|---|---|---|---|---|---|---|---|---|---|"
+        "| Name | Pos | Team | £ | Mins | Pts | Form | FDR3 | ICT | FCPS | Status |"
+        "\n|---|---|---|---|---|---|---|---|---|---|---|"
     )
     # Status is spelled out rather than passed through as FPL's single letter.
     # "i" means nothing to a language model; "injured" does, and the whole point
@@ -320,10 +336,19 @@ def _table(rows: Sequence[Mapping]) -> str:
         label = words.get(status, status)
         if row.get("starting_eleven") is False:
             label += ", benched"
+        # A player with no minutes has no points, no form and no ICT — but
+        # printing those as 0 states a fact the season has not established, and
+        # an instruction not to misread it is weaker than not showing it. A
+        # dash cannot be quoted back as "zero points, zero form".
+        played = int(row.get("minutes", 0) or 0) > 0
+        points = f"{row['total_points']}" if played else "—"
+        form = f"{row['form']:.1f}" if played else "—"
+        ict = f"{row['ict_index']:.1f}" if played else "—"
         lines.append(
             f"| {row['name']} | {row['position']} | {row['team']} | "
-            f"{row['price']:.1f} | {row['total_points']} | {row['form']:.1f} | "
-            f"{row['next_3_fdr']} | {row['ict_index']:.1f} | "
+            f"{row['price']:.1f} | {row.get('minutes', 0)} | "
+            f"{points} | {form} | "
+            f"{row['next_3_fdr']} | {ict} | "
             f"{row['fcps']:.0f} | {label} |"
         )
     return "\n".join(lines)

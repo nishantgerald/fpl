@@ -201,7 +201,8 @@ def test_player_row_is_compact_and_typed(elements, fixtures):
 
     assert set(row) == {
         "id", "name", "team", "position", "price", "total_points", "form",
-        "next_3_fdr", "ict_index", "fcps", "status", "starting_eleven",
+        "minutes", "next_3_fdr", "ict_index", "fcps", "status",
+        "starting_eleven",
     }
     assert isinstance(row["price"], float)
     assert row["starting_eleven"] is False
@@ -270,3 +271,51 @@ def test_manager_elements_never_reach_a_row(elements, fixtures):
     manager = make_element(9100, 5, team=1)
     scored = fcps.score_all(list(elements) + [manager], fixtures, 13)
     assert 9100 not in scored
+
+
+# ------------------------------------------------- what a zero is allowed to mean
+
+
+def test_a_player_who_has_not_played_shows_dashes_not_zeros(elements, fixtures):
+    """Fixtures within a gameweek run across several days, so early in one most
+    players have no minutes. Printing their points and form as 0 states a fact
+    the season has not established, and the advice duly quoted it back: "zero
+    points, zero form" about a defender whose match had not kicked off, and
+    "blanked in GW1" about a midfielder for the same reason.
+
+    A dash cannot be read as a score.
+    """
+    scored = fcps.score_all(elements, fixtures, 13)
+    element = {**elements[0], "minutes": 0, "total_points": 0, "form": "0.0"}
+    row = fcps_llm.player_row(
+        element, scored[int(elements[0]["id"])], "ARS", in_squad=True, starting=True
+    )
+
+    table = fcps_llm._table([row])
+
+    assert "| Mins |" in table, 'the column that explains the dash'
+    assert "—" in table
+    assert "| 0 | 0.0 |" not in table
+
+
+def test_a_player_who_has_played_still_shows_his_numbers(elements, fixtures):
+    """The masking must not hide a real zero. Somebody who played ninety minutes
+    and scored nothing has told us something, and it is the opposite thing."""
+    scored = fcps.score_all(elements, fixtures, 13)
+    element = {**elements[0], "minutes": 90, "total_points": 0, "form": "0.0"}
+    row = fcps_llm.player_row(
+        element, scored[int(elements[0]["id"])], "ARS", in_squad=True, starting=True
+    )
+
+    table = fcps_llm._table([row])
+
+    assert "| 90 | 0 | 0.0 |" in table
+
+
+def test_the_prompt_says_what_a_dash_means():
+    prompt = fcps_llm.build_prompt([], [], gameweek=1)
+
+    # Matched on unwrapped fragments: the constraint is a wrapped paragraph, so
+    # asserting a whole sentence would break on a reflow rather than on meaning.
+    assert "A player on 0 minutes has not" in prompt
+    assert "not because they played badly" in prompt
