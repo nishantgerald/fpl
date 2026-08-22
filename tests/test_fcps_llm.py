@@ -319,3 +319,45 @@ def test_the_prompt_says_what_a_dash_means():
     # asserting a whole sentence would break on a reflow rather than on meaning.
     assert "A player on 0 minutes has not" in prompt
     assert "not because they played badly" in prompt
+
+
+# --------------------------------------------------- headings that count right
+
+
+def test_numbered_headings_lose_their_numbers():
+    """Positions with nothing to recommend are omitted, so numbering them gives
+    a column that runs "2. Defender" then "4. Forward" and sends the reader
+    looking for the two in between."""
+    markdown = (
+        "# Fantasy Premier League Transfer Recommendations\n\n"
+        "## 2. Defender\n* **Out:** A\n\n"
+        "## 4. Forward\n* **Out:** B\n"
+    )
+
+    cleaned = fcps_llm.strip_heading_numbers(markdown)
+
+    assert "## Defender" in cleaned
+    assert "## Forward" in cleaned
+    assert "2." not in cleaned
+    assert "4." not in cleaned
+
+
+def test_a_numbered_list_in_the_prose_is_left_alone():
+    """Those are someone counting something. Renumbering them would change what
+    they said, which is a different bug from the one being fixed."""
+    markdown = "## Summary\n\n1. Sell Palmer first.\n2. Then buy Havertz.\n"
+
+    assert fcps_llm.strip_heading_numbers(markdown) == markdown
+
+
+def test_an_unnumbered_heading_is_untouched():
+    markdown = "## Goalkeeper\n* **Out:** A\n"
+
+    assert fcps_llm.strip_heading_numbers(markdown) == markdown
+
+
+def test_the_prompt_asks_for_unnumbered_headings():
+    prompt = fcps_llm.build_prompt([], [], gameweek=1)
+
+    assert "Do not number the position headings" in prompt
+    assert "## 1. Goalkeeper" not in prompt

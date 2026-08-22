@@ -29,6 +29,8 @@ roughly 40 KB of JSON per call.
 
 from __future__ import annotations
 
+import re
+
 import hashlib
 import json
 import os
@@ -284,7 +286,7 @@ Structure your response as markdown, grouped by position, in this shape:
 
 # Fantasy Premier League Transfer Recommendations
 
-## 1. Goalkeeper
+## Goalkeeper
 * **Out:** Name (GKP, TEAM) — 5.0
   Reason: one sentence.
 * **In:** Name (GKP, TEAM) — 4.5
@@ -293,6 +295,10 @@ Structure your response as markdown, grouped by position, in this shape:
 
 ...repeat for Defenders, Midfielders and Forwards, omitting any position where
 you don't recommend a change...
+
+Do not number the position headings. Positions with no recommended change are
+left out, so numbering them produces a list that runs "2." then "4." and asks
+the reader to wonder what happened to 1 and 3.
 
 ## Summary
 
@@ -381,7 +387,7 @@ def advise(
     prompt = build_prompt(
         squad_rows, shortlist_rows, gameweek, bank, free_transfers, digest=digest
     )
-    markdown = call_model(prompt)
+    markdown = strip_heading_numbers(call_model(prompt))
 
     result = {
         "markdown": markdown,
@@ -499,6 +505,23 @@ def call_model(prompt: str) -> str:
             "fcps_upstream_error", "The model returned an empty response.", status=502
         )
     return markdown
+
+
+def strip_heading_numbers(markdown: str) -> str:
+    """Drop "1. " and the like from position headings.
+
+    Positions with nothing to recommend are omitted, so numbering them yields a
+    column that runs "2. Defender" then "4. Forward" and leaves the reader
+    hunting for the two that are missing. The prompt asks for unnumbered
+    headings; this is what makes it so, because an instruction is a request and
+    the numbering has to be gone every time.
+
+    Only headings are touched. Numbered lists in the prose are someone counting
+    something, and renumbering those would change what they said.
+    """
+    return re.sub(
+        r"^(#{1,6}\s+)\d+[.)]\s+", r"\1", markdown, flags=re.MULTILINE
+    )
 
 
 def audit_mentions(
