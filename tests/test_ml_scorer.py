@@ -220,3 +220,46 @@ def test_the_status_response_reports_the_model_live_once_the_season_is_old_enoug
     assert described["active"] is True
     assert described["engines"] == list(ml_scorer.ENGINES)
     assert "reason" not in described
+
+
+# ------------------------- a model answering about a season it never saw
+
+
+def _teams(played):
+    return [{"id": i, "short_name": f"T{i}", "played": played} for i in range(1, 21)]
+
+
+def test_a_season_younger_than_the_training_floor_falls_back(monkeypatch):
+    """`ml.config.MIN_GAMEWEEK` drops the opening gameweeks from training,
+    because a season's cumulative per-90 features are computed over a handful of
+    minutes there and are mostly noise. Serving those weeks anyway asks the
+    model about a state it was never shown, and trees answer regardless by
+    extrapolating from the nearest thing they know.
+    """
+    assert ml_scorer._season_is_younger_than_training(_teams(1), [])
+    assert ml_scorer._season_is_younger_than_training(_teams(4), [])
+
+
+def test_once_the_season_is_old_enough_the_model_is_used_again():
+    assert not ml_scorer._season_is_younger_than_training(_teams(5), [])
+    assert not ml_scorer._season_is_younger_than_training(_teams(20), [])
+
+
+def test_the_rollover_counts_as_younger_than_anything():
+    """0 played is the youngest a season gets, and squarely inside the window."""
+    assert ml_scorer._season_is_younger_than_training(_teams(0), [])
+
+
+def test_the_caller_is_told_which_engine_actually_answered(monkeypatch):
+    """The response must not label hand-built numbers as model output. The same
+    honesty that covers a missing artifact has to cover this."""
+    monkeypatch.setattr(ml_scorer, "_predictor", lambda: object())
+    monkeypatch.setattr(
+        ml_scorer.xpts, "project_all", lambda *a, **k: {1: {"horizon_xpts": 5.0}}
+    )
+
+    _, used = ml_scorer.project_all(
+        [], [], _teams(2), [], from_gameweek=1, horizon=5, engine="ml"
+    )
+
+    assert used == "xpts"

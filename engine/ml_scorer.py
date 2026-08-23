@@ -136,6 +136,23 @@ def _predictor():
 # ---------------------------------------------------------------- projections
 
 
+def _season_is_younger_than_training(
+    teams: Sequence[Mapping], events: Sequence[Mapping]
+) -> bool:
+    """Whether the league has played fewer rounds than the model was trained on.
+
+    Measured from matches actually played rather than the gameweek number, so a
+    season that opens with postponements is judged by the football rather than
+    by the calendar.
+    """
+    from ml import config as ml_config
+
+    played = xpts.team_games_played(teams, events)
+    # 0 is the rollover, before anybody has kicked a ball — the youngest a
+    # season gets, and squarely inside the window this guards.
+    return played < int(ml_config.MIN_GAMEWEEK)
+
+
 def project_all(
     elements: Sequence[Mapping],
     fixtures: Sequence[Mapping],
@@ -161,6 +178,20 @@ def project_all(
 
     predictor = _predictor()
     if predictor is None:
+        return baseline, "xpts"
+
+    # The model was fitted on gameweek 5 onward — `ml.config.MIN_GAMEWEEK` —
+    # because before then a season's cumulative per-90 features are computed
+    # over a handful of minutes and are mostly noise. Those rows were dropped
+    # from training, so in the opening weeks of a season this is being asked
+    # for a prediction about a state it was never shown. It answers anyway, as
+    # trees always do, by extrapolating from the nearest thing it knows.
+    #
+    # The hand-built engine is built for exactly this window: it regresses a
+    # player's thin rates toward what he actually did last season. So the same
+    # honesty that covers a missing artifact covers a season too young for the
+    # one we have, and the caller is told which engine really answered.
+    if _season_is_younger_than_training(teams, events):
         return baseline, "xpts"
 
     gameweeks = [entry["gameweek"] for entry in _any_per_gameweek(baseline)] or [
