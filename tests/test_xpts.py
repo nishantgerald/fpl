@@ -703,3 +703,98 @@ def test_a_missing_artifact_is_not_an_error(monkeypatch):
     )
 
     assert xpts.player_rate_priors() == {}
+
+
+# ------------------------ a gameweek already played is not a gameweek to come
+
+
+def _fixture(event, home, away, finished=False, provisional=False):
+    return {
+        "event": event,
+        "team_h": home,
+        "team_a": away,
+        "team_h_difficulty": 3,
+        "team_a_difficulty": 3,
+        "finished": finished,
+        "finished_provisional": provisional,
+    }
+
+
+def test_a_match_played_but_not_bonus_confirmed_is_still_played():
+    """`finished` is only set once FPL confirms bonus, which can be a day after
+    the whistle. `finished_provisional` is the whistle.
+
+    Without it a match that had been played stayed in the projection: Haaland's
+    GW1 was the first of his "next five gameweeks" hours after he had played
+    it, with an expected-points number attached that could no longer happen.
+    """
+    index = xpts.build_fixture_index(
+        [_fixture(1, 1, 2, provisional=True), _fixture(2, 1, 3)], from_gameweek=1
+    )
+
+    assert 1 not in index.get(1, {}), "a played match is not an upcoming one"
+    assert 2 in index.get(1, {})
+
+
+def test_the_played_index_separates_history_from_a_blank():
+    """A club with no fixture is either blanking or has already played, and the
+    fixture index drops both. They are opposite facts."""
+    played = xpts.played_index(
+        [_fixture(1, 1, 2, provisional=True), _fixture(2, 1, 3)]
+    )
+
+    assert played[1] == {1}
+    assert played[2] == {1}
+    assert 2 not in played.get(1, set()), "GW2 has not been played"
+
+
+def test_a_run_starts_at_the_first_gameweek_still_to_come(teams, events):
+    """The bug, end to end.
+
+    FPL keeps a gameweek current until its last match kicks off, so one club can
+    have played it while another has not — which is why this is decided per
+    player rather than by advancing the league's gameweek.
+    """
+    played_club, waiting_club = 1, 2
+    fixtures = [
+        # Club 1 has played its GW1; club 2 has not.
+        _fixture(1, played_club, 3, provisional=True),
+        _fixture(1, waiting_club, 4),
+        *[_fixture(gw, played_club, 3) for gw in range(2, 8)],
+        *[_fixture(gw, waiting_club, 4) for gw in range(2, 8)],
+    ]
+    squad = [
+        make_element(10, 3, played_club, minutes=900, starts=10),
+        make_element(11, 3, waiting_club, minutes=900, starts=10),
+    ]
+
+    projections = xpts.project_all(
+        squad, fixtures, teams, events, from_gameweek=1, horizon=5
+    )
+
+    played_run = [g["gameweek"] for g in projections[10]["per_gameweek"]]
+    waiting_run = [g["gameweek"] for g in projections[11]["per_gameweek"]]
+
+    assert played_run[0] == 2, "the gameweek he has played is behind him"
+    assert waiting_run[0] == 1, "and still ahead of the club yet to play it"
+    assert len(played_run) == 5, "still five, not four"
+    assert len(waiting_run) == 5
+
+
+def test_a_blank_further_out_stays_in_the_run(teams, events):
+    """Only leading played gameweeks are dropped. A blank three weeks away is a
+    fact about the calendar and is exactly what the run exists to show."""
+    club = 1
+    fixtures = [
+        _fixture(1, club, 3, provisional=True),
+        # Nothing scheduled for GW4 — a blank, not a match already played.
+        *[_fixture(gw, club, 3) for gw in (2, 3, 5, 6, 7)],
+    ]
+    squad = [make_element(10, 3, club, minutes=900, starts=10)]
+
+    run = xpts.project_all(
+        squad, fixtures, teams, events, from_gameweek=1, horizon=5
+    )[10]["per_gameweek"]
+
+    assert [g["gameweek"] for g in run] == [2, 3, 4, 5, 6]
+    assert run[2]["fixtures"] == [], "GW4 is blank and says so"

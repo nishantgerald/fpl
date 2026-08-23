@@ -127,6 +127,27 @@ def _f(value, default: float = 0.0) -> float:
         return default
 
 
+def played_index(fixtures: Sequence[Mapping]) -> dict[int, set[int]]:
+    """``team_id -> {gameweeks already played}``.
+
+    A club with no fixture in a gameweek is either blanking or has already
+    played it, and those are opposite facts: the first belongs in a projection
+    and the second is history. The fixture index cannot tell them apart because
+    it drops both, so the distinction is kept here.
+    """
+    played: dict[int, set[int]] = {}
+    for fx in fixtures:
+        event = fx.get("event")
+        if event is None:
+            continue
+        if not (fx.get("finished") or fx.get("finished_provisional")):
+            continue
+        for key in ("team_h", "team_a"):
+            team_id = int(fx.get(key) or 0)
+            played.setdefault(team_id, set()).add(int(event))
+    return played
+
+
 def build_fixture_index(
     fixtures: Sequence[Mapping],
     from_gameweek: int,
@@ -142,7 +163,11 @@ def build_fixture_index(
         event = fx.get("event")
         if event is None or int(event) < from_gameweek:
             continue
-        if fx.get("finished"):
+        # `finished` is only set once FPL confirms bonus, which can be a day
+        # after the whistle. `finished_provisional` is the whistle. Without it a
+        # match that has been played stays in the projection: Haaland's GW1 was
+        # counted in his "next 5 gameweeks" hours after he had played it.
+        if fx.get("finished") or fx.get("finished_provisional"):
             continue
         event = int(event)
         home, away = int(fx["team_h"]), int(fx["team_a"])
@@ -721,6 +746,8 @@ def project_player(
     rate_priors: Mapping[str, Mapping[str, float]] | None = None,
     ownership: Mapping[tuple[int, int], float] | None = None,
     band_priors: Mapping | None = None,
+    played_gameweeks: frozenset[int] | set[int] = frozenset(),
+    horizon: int | None = None,
 ) -> dict:
     """Project one player over ``gameweeks``.
 
@@ -862,19 +889,32 @@ def project_player(
             }
         )
 
-    horizon = round(sum(g["xpts"] for g in per_gameweek), 2)
+    # A gameweek this club has already played is history, not a projection.
+    # FPL keeps a gameweek "current" until its last match kicks off, so hours
+    # after Haaland had played GW1 it was still the first of his "next five" —
+    # with a number attached that could no longer happen.
+    #
+    # Only leading entries are dropped. A blank further out is a fact about the
+    # calendar and belongs in the run; the two look identical here, which is
+    # why `played_index` keeps them apart.
+    while per_gameweek and int(per_gameweek[0]["gameweek"]) in played_gameweeks:
+        per_gameweek.pop(0)
+    if horizon is not None:
+        per_gameweek = per_gameweek[:horizon]
+
+    horizon_total = round(sum(g["xpts"] for g in per_gameweek), 2)
     price = int(player.get("now_cost", 0)) or 1
 
     return {
         "player_id": int(player["id"]),
-        "horizon_xpts": horizon,
+        "horizon_xpts": horizon_total,
         "xpts_next": per_gameweek[0]["xpts"] if per_gameweek else 0.0,
         "per_gameweek": per_gameweek,
         "availability": round(availability_factor(player, 0), 3),
         "minutes_risk": minutes_risk(profile),
         "minutes_basis": minutes_basis(profile),
         "p_start": round(profile["p_start"], 3),
-        "xpts_per_million": round(horizon / (price / 10.0), 3),
+        "xpts_per_million": round(horizon_total / (price / 10.0), 3),
     }
 
 
@@ -962,8 +1002,13 @@ def project_all(
     horizon: int = 5,
 ) -> dict[int, dict]:
     """Project every player over the horizon. Returns ``player_id -> projection``."""
-    gameweeks = _horizon_gameweeks(events, from_gameweek, horizon)
+    # One extra gameweek in the window, because the current one may already be
+    # behind a club and gets dropped for them below. Asking for five and
+    # returning four when a player has just played would be the same bug in a
+    # quieter form.
+    gameweeks = _horizon_gameweeks(events, from_gameweek, horizon + 1)
     fixture_index = build_fixture_index(fixtures, from_gameweek)
+    already_played = played_index(fixtures)
     team_index = build_team_index(teams)
     games = team_games_played(teams, events)
     priors = position_rate_priors(elements)
@@ -980,6 +1025,8 @@ def project_all(
             priors,
             ownership,
             band_priors,
+            already_played.get(int(p.get("team", 0)) or 0, frozenset()),
+            horizon,
         )
         for p in elements
         if POSITIONS.get(int(p.get("element_type", 0))) in ("GKP", "DEF", "MID", "FWD")
