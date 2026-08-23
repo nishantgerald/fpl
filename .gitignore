@@ -5,12 +5,22 @@ archive
 .env
 .venv/
 
-# Training artefacts. The cache is ~200 MB of upstream CSVs and the model is a
-# build output — both are reproducible from `python -m ml.sources && ml.train`.
+# Training artefacts. The cache is ~200 MB of upstream CSVs and is reproducible
+# from `python -m ml.sources`, so it stays out.
+#
 # The *reports* are checked in, because they are the evidence for the numbers in
 # PRDs/ml-methodology.md and a claim without its receipt is just a claim.
+#
+# The *model* is checked in too, and was not. It is a build output, but nothing
+# on the server builds it: Heroku installs requirements and serves, so an
+# ignored artifact is an artifact production never had. The engine picker has
+# been offering a model that was not there — /api/engines answered "No trained
+# model artifact on this server" the whole time. 1.5 MB, and the retrain gate
+# means it only changes when it is actually better.
 ml/_data/
-ml/artifacts/
+ml/artifacts/*
+!ml/artifacts/xpts_model.joblib
+!ml/artifacts/xpts_model.json
 !ml/reports/
 # Flutter build output is committed so Heroku can serve it.
 # Regenerate locally with: bash scripts/deploy_flutter.sh
