@@ -275,3 +275,39 @@ def test_no_scheduled_matches_gives_an_empty_run_not_an_error():
     fixtures = _fixtures_for({"per_gameweek": []})
 
     assert fixtures == []
+
+
+# ------------------------------------------- what a manager opened the page for
+
+
+def test_a_player_carries_what_he_scored_this_gameweek():
+    """FPL keeps it on the element and the app never read it, so a squad
+    mid-gameweek showed projections and nothing else — the one number a manager
+    opens the page for was the one number missing."""
+    with flask_app.app.test_request_context():
+        payload = flask_app._player_payload(
+            {
+                "id": 1,
+                "web_name": "Scorer",
+                "status": "a",
+                "element_type": 4,
+                "event_points": 13,
+            },
+            "ARS",
+            {"per_gameweek": []},
+        )
+
+    assert payload["event_points"] == 13
+
+
+def test_a_player_yet_to_play_scores_nought_not_nothing():
+    """Absent is not the same as zero here: the field is always present, so the
+    client never has to guess whether a blank means "no data" or "no points"."""
+    with flask_app.app.test_request_context():
+        payload = flask_app._player_payload(
+            {"id": 1, "web_name": "Waiting", "status": "a", "element_type": 4},
+            "ARS",
+            {"per_gameweek": []},
+        )
+
+    assert payload["event_points"] == 0

@@ -307,6 +307,11 @@ def _player_payload(element, team_short, projection, fcps_entry=None):
         "minutes_basis": projection.get("minutes_basis", "estimated"),
         "availability": projection.get("availability", 1.0),
         "next_3_fdr": fcps_entry.get("next_3_fdr", fdr_sum),
+        # What they have actually scored in the gameweek being shown. FPL keeps
+        # this on the element and the app never read it, so a squad mid-gameweek
+        # showed projections and nothing else — the one number a manager opens
+        # the page for was the one number missing.
+        "event_points": int(element.get("event_points", 0) or 0),
         # How many matches that sum covers. Without it the client can only show
         # the total, which is on no scale anybody knows: FDR is a 1-5 rating per
         # match, and a total over three is 3-15. The glossary describes the
@@ -830,6 +835,11 @@ def _team_response(user_id: int, horizon: int, cookie: str | None = None):
                 "is_captain": bool(pick.get("is_captain")),
                 "is_vice_captain": bool(pick.get("is_vice_captain")),
                 "starting_eleven": int(pick.get("multiplier", 0)) > 0,
+                # Captaincy doubles a score and Triple Captain trebles it. The
+                # client multiplies rather than the server, so the raw figure
+                # stays available for anything that wants the player's own
+                # return rather than what he earned this manager.
+                "multiplier": int(pick.get("multiplier", 0)),
             }
         )
         if payload["starting_eleven"] and payload["position"] in lineup:
@@ -846,6 +856,27 @@ def _team_response(user_id: int, horizon: int, cookie: str | None = None):
         "bench": bench,
         "bank": history.get("bank"),
         "squad_value": history.get("value"),
+        # FPL's own accounting for the gameweek: already has captaincy, auto
+        # substitutions and any transfer hit in it, which is why it is taken
+        # whole rather than summed from the eleven on screen.
+        "event_points": history.get("points"),
+        "points_on_bench": history.get("points_on_bench"),
+        "transfer_cost": history.get("event_transfers_cost"),
+        "total_points": history.get("total_points"),
+        "overall_rank": history.get("overall_rank"),
+        # Whether those numbers are still moving. A score presented as final
+        # while three of the eleven have not kicked off is a different claim
+        # from the same score presented as live.
+        "gameweek_finished": bool(
+            next(
+                (
+                    e.get("finished")
+                    for e in data.get("events", [])
+                    if int(e.get("id", 0)) == int(state["gameweek"])
+                ),
+                False,
+            )
+        ),
         "active_chip": picks_payload.get("active_chip"),
         # Pre-deadline this squad is a draft the manager can still change,
         # and the client says so rather than presenting it as settled. A
