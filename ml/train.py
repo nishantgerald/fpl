@@ -31,6 +31,36 @@ from . import baselines, config, features as feature_mod, metrics, models, panel
 SELECTION_METRIC = "spearman_gw"
 
 
+#: How much better a candidate must score on validation before it replaces the
+#: deployed artifact. Not zero: refits differ by noise, and a pipeline that
+#: ships on any improvement ships on rounding half the time.
+GATE_MARGIN = 0.002
+
+
+def incumbent_validation_score(valid) -> float | None:
+    """The deployed artifact's score on *this* validation split, or None.
+
+    Scored here rather than read out of its own metadata. The splits roll
+    forward as seasons are added, so the incumbent's recorded number describes a
+    different set of gameweeks and comparing against it would be comparing two
+    models on two exams.
+
+    None means there is nothing to compare against — no artifact, or one whose
+    feature list no longer matches, which :func:`ml.models.load` refuses. Both
+    are deliberate resets rather than regressions.
+    """
+    model, _ = models.load()
+    if model is None:
+        return None
+    try:
+        scored = valid.copy()
+        scored["pred_incumbent"] = models.predict(model, scored)
+        return _finite(metrics.evaluate(scored, "pred_incumbent")[SELECTION_METRIC])
+    except Exception as error:  # pragma: no cover - artifact shapes vary
+        print(f"[gate] could not score the incumbent ({error}); treating as absent")
+        return None
+
+
 def load_frame(refresh: bool = False):
     """Panel -> features, with a leakage assertion on real data before returning."""
     raw = panel.build_cached(refresh=refresh)
@@ -51,7 +81,12 @@ def load_frame(refresh: bool = False):
     return frame
 
 
-def run(refresh: bool = False, candidates=None, output: str | None = None) -> dict:
+def run(
+    refresh: bool = False,
+    candidates=None,
+    output: str | None = None,
+    force: bool = False,
+) -> dict:
     frame = load_frame(refresh=refresh)
     train, valid, test = splits.season_split(frame)
 
@@ -134,8 +169,38 @@ def run(refresh: bool = False, candidates=None, output: str | None = None) -> di
         "importances": models.importances(final),
         "candidates": candidates,
     }
-    models.save(final, metadata)
-    print(f"[save] {config.artifact_path()}")
+    # ── The gate ────────────────────────────────────────────────────────────
+    #
+    # A retraining pipeline that always saves is a pipeline that will eventually
+    # deploy a worse model and tell nobody. The candidate has to beat what is
+    # already deployed, on the same validation split, by more than the noise
+    # between two refits.
+    incumbent = incumbent_validation_score(valid)
+    candidate = _finite(validation_scores[winner][SELECTION_METRIC])
+    metadata["gate"] = {
+        "metric": SELECTION_METRIC,
+        "candidate": candidate,
+        "incumbent": incumbent,
+        "margin": GATE_MARGIN,
+    }
+
+    shipped = force or incumbent is None or candidate > incumbent + GATE_MARGIN
+    metadata["gate"]["shipped"] = shipped
+    if shipped:
+        models.save(final, metadata)
+        if incumbent is None:
+            print(f"[save] {config.artifact_path()} (nothing to compare against)")
+        else:
+            print(
+                f"[save] {config.artifact_path()} "
+                f"({SELECTION_METRIC} {incumbent:.4f} -> {candidate:.4f})"
+            )
+    else:
+        print(
+            f"[gate] keeping the deployed model: {SELECTION_METRIC} "
+            f"{candidate:.4f} does not beat {incumbent:.4f} by {GATE_MARGIN}. "
+            "Pass --force to overrule."
+        )
 
     print("\nValidation (model selection):")
     print(metrics.format_table(validation_scores))
@@ -164,9 +229,19 @@ def main(argv=None) -> int:
         "--models", nargs="*", default=None, help="candidate subset to compare"
     )
     parser.add_argument("--report", default="train_report.json")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="deploy the candidate even if it does not beat the incumbent",
+    )
     args = parser.parse_args(argv)
 
-    run(refresh=args.refresh, candidates=args.models, output=args.report)
+    run(
+        refresh=args.refresh,
+        candidates=args.models,
+        output=args.report,
+        force=args.force,
+    )
     return 0
 
 
