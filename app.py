@@ -249,6 +249,44 @@ def _engine_arg():
     return requested if requested in ml_scorer.ENGINES else ml_scorer.DEFAULT_ENGINE
 
 
+def _match_states(gameweek: int, teams: dict) -> dict[int, dict]:
+    """Where each club's gameweek stands: ``team_id -> {state, label}``.
+
+    FPL's own pitch shows a player's *fixture* until his match has happened and
+    his *points* afterwards, and that is not decoration. A nought against
+    someone whose match kicks off on Sunday reads as a blank, which is the same
+    mistake as reporting a zero for a player who has not played — the app made
+    it on the squad screen while fixing it in the written advice.
+
+    ``finished_provisional`` is FPL's "the whistle has gone, the bonus is not
+    final". It counts as finished here: the points shown will still move by a
+    point or three, but the match is over, and calling it live would put a
+    ticking indicator on a game nobody is playing.
+    """
+    states: dict[int, dict] = {}
+    for fixture in fpl_client.fixtures() or []:
+        if int(fixture.get("event") or 0) != int(gameweek):
+            continue
+        started = bool(fixture.get("started"))
+        done = bool(fixture.get("finished") or fixture.get("finished_provisional"))
+        state = "finished" if (started and done) else "live" if started else "upcoming"
+
+        home_id = int(fixture.get("team_h") or 0)
+        away_id = int(fixture.get("team_a") or 0)
+        for team_id, opponent_id, at_home in (
+            (home_id, away_id, True),
+            (away_id, home_id, False),
+        ):
+            label = f"{teams.get(opponent_id, 'UNK')} ({'H' if at_home else 'A'})"
+            existing = states.get(team_id)
+            # A double gameweek gets the earlier state: a club with one match
+            # played and one to come has not finished its gameweek.
+            order = {"upcoming": 0, "live": 1, "finished": 2}
+            if existing is None or order[state] < order[existing["match_state"]]:
+                states[team_id] = {"match_state": state, "match_label": label}
+    return states
+
+
 def _player_payload(element, team_short, projection, fcps_entry=None):
     """One player, as the client consumes them.
 
@@ -817,6 +855,8 @@ def _team_response(user_id: int, horizon: int, cookie: str | None = None):
     elements = {int(p["id"]): p for p in data.get("elements", [])}
     teams = {int(t["id"]): t.get("short_name", "UNK") for t in data.get("teams", [])}
 
+    match_states = _match_states(state["gameweek"], teams)
+
     lineup = {"GKP": [], "DEF": [], "MID": [], "FWD": []}
     bench = []
     for pick in picks_payload["picks"]:
@@ -840,6 +880,13 @@ def _team_response(user_id: int, horizon: int, cookie: str | None = None):
                 # stays available for anything that wants the player's own
                 # return rather than what he earned this manager.
                 "multiplier": int(pick.get("multiplier", 0)),
+                # Whether his match has happened, so the client can show the
+                # fixture until it has and the score afterwards. A club with no
+                # fixture at all is blanking, which is neither.
+                **(
+                    match_states.get(int(element.get("team", 0)))
+                    or {"match_state": "blank", "match_label": "No fixture"}
+                ),
             }
         )
         if payload["starting_eleven"] and payload["position"] in lineup:

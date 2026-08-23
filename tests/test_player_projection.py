@@ -311,3 +311,78 @@ def test_a_player_yet_to_play_scores_nought_not_nothing():
         )
 
     assert payload["event_points"] == 0
+
+
+# ------------------------------------------- played, playing, or not yet
+
+
+def _states(fixtures, gameweek=1):
+    teams = {1: "ARS", 2: "CHE", 3: "FUL"}
+    with flask_app.app.test_request_context():
+        flask_app.fpl_client.fixtures = lambda: fixtures
+        return flask_app._match_states(gameweek, teams)
+
+
+def test_a_match_not_yet_kicked_off_is_upcoming():
+    """FPL's own pitch shows the fixture until the match has happened and the
+    points afterwards. A nought against someone playing on Sunday reads as a
+    blank — the same mistake as reporting a zero for a player who has not
+    played, which this app fixed in the written advice and not on the squad."""
+    states = _states([{"event": 1, "team_h": 2, "team_a": 3, "started": False}])
+
+    assert states[2]["match_state"] == "upcoming"
+    # Team 2 is the home side here, so the label is from each club's own point
+    # of view: home to Fulham, and Fulham away at them.
+    assert states[2]["match_label"] == "FUL (H)"
+    assert states[3]["match_label"] == "CHE (A)"
+
+
+def test_a_match_in_progress_is_live():
+    states = _states([{"event": 1, "team_h": 2, "team_a": 3, "started": True}])
+
+    assert states[2]["match_state"] == "live"
+
+
+def test_a_provisionally_finished_match_is_finished():
+    """FPL's "the whistle has gone, the bonus is not final". The points will
+    still move by a point or three, but calling it live would put a ticking
+    indicator on a game nobody is playing."""
+    states = _states(
+        [
+            {
+                "event": 1,
+                "team_h": 2,
+                "team_a": 3,
+                "started": True,
+                "finished": False,
+                "finished_provisional": True,
+            }
+        ]
+    )
+
+    assert states[2]["match_state"] == "finished"
+
+
+def test_a_club_with_one_match_played_and_one_to_come_has_not_finished():
+    """A double gameweek takes the earlier state: half a gameweek is not a
+    gameweek, and showing a settled score would hide the match still to come."""
+    states = _states(
+        [
+            {
+                "event": 1,
+                "team_h": 2,
+                "team_a": 3,
+                "started": True,
+                "finished_provisional": True,
+            },
+            {"event": 1, "team_h": 1, "team_a": 2, "started": False},
+        ]
+    )
+
+    assert states[2]["match_state"] == "upcoming"
+
+
+def test_another_gameweeks_fixtures_are_ignored():
+    states = _states([{"event": 2, "team_h": 2, "team_a": 3, "started": True}])
+
+    assert states == {}
