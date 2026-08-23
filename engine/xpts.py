@@ -95,6 +95,21 @@ STARTER_MINUTES = 80.0
 SHRINK_PSEUDO_MINUTES = 600.0
 RELIABLE_MINUTES = 900.0
 
+#: Floors tried in turn when building the priors, highest first.
+#:
+#: The lowest is a substantial appearance rather than any appearance at all: a
+#: two-minute cameo carrying an expected-goals rate of 3.6 per 90 is the thing
+#: the priors exist to correct, and it must never be allowed to set one.
+PRIOR_MINUTE_LADDER = (RELIABLE_MINUTES, 450.0, 270.0, 90.0, 60.0)
+
+#: How many players a position needs before a *descended* floor is trusted.
+#:
+#: Not applied at :data:`RELIABLE_MINUTES`, where the pool is trustworthy by
+#: construction however small — that is the bar this all wanted in the first
+#: place, and a handful of fully-evidenced players beats a crowd of cameos.
+MIN_PRIOR_SAMPLE = 5
+
+
 # Bonus points regress hard; a player's season bonus rate over-fits small samples.
 BONUS_SHRINK = 0.85
 
@@ -319,11 +334,26 @@ def effective_team_games(team_games: int) -> float:
 def position_rate_priors(
     elements: Sequence[Mapping],
 ) -> dict[str, dict[str, float]]:
-    """Median per-90 rate per position, over players with real minutes.
+    """Median per-90 rate per position, over the best-evidenced players there are.
 
-    The prior that :func:`shrink_rate` regresses toward. Computed from players
-    with at least :data:`RELIABLE_MINUTES` so the priors themselves aren't
-    poisoned by the small samples they exist to correct.
+    The prior that :func:`shrink_rate` regresses toward.
+
+    :data:`RELIABLE_MINUTES` is the bar we *want*, so the priors are not poisoned
+    by the small samples they exist to correct. It is not a bar that can always
+    be met. FPL resets every total at the season rollover, so from the first
+    kick until somebody has played ten full matches there is no player in the
+    league who clears it — and this returned ``{}`` for all of them, which
+    :func:`project_player` read as "no shrinking to do".
+
+    That is backwards. The window with no reliable players is precisely the
+    window where every rate on record is a cameo: at GW1 a midfielder who
+    scored once in 63 minutes carried an expected-goals rate of 2.01 per 90
+    unshrunk, and projected 6.5 points a gameweek — ahead of every premium in
+    the game.
+
+    So the bar descends until it finds a pool. A median over players with 180
+    minutes is a poor prior; it is enormously better than no prior, and it is
+    what the first two months of every season have to be judged against.
     """
     keys = (
         "expected_goals_per_90",
@@ -332,21 +362,31 @@ def position_rate_priors(
         "saves_per_90",
         "defensive_contribution_per_90",
     )
-    buckets: dict[str, dict[str, list[float]]] = {}
-    for element in elements:
-        if _f(element.get("minutes")) < RELIABLE_MINUTES:
-            continue
-        position = position_of(element)
-        for key in keys:
-            value = _f(element.get(key))
-            if value > 0:
-                buckets.setdefault(position, {}).setdefault(key, []).append(value)
 
     priors: dict[str, dict[str, float]] = {}
-    for position, by_key in buckets.items():
-        for key, values in by_key.items():
-            values.sort()
-            priors.setdefault(position, {})[key] = values[len(values) // 2]
+    for floor in PRIOR_MINUTE_LADDER:
+        buckets: dict[str, dict[str, list[float]]] = {}
+        for element in elements:
+            if _f(element.get("minutes")) < floor:
+                continue
+            position = position_of(element)
+            for key in keys:
+                value = _f(element.get(key))
+                if value > 0:
+                    buckets.setdefault(position, {}).setdefault(key, []).append(value)
+
+        for position, by_key in buckets.items():
+            for key, values in by_key.items():
+                # Set once, by the highest floor that could fill it: a prior
+                # from better-evidenced players is never replaced by one from
+                # worse.
+                if key in priors.get(position, {}):
+                    continue
+                if floor < RELIABLE_MINUTES and len(values) < MIN_PRIOR_SAMPLE:
+                    continue
+                values.sort()
+                priors.setdefault(position, {})[key] = values[len(values) // 2]
+
     return priors
 
 

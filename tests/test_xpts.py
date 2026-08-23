@@ -542,3 +542,70 @@ def test_the_baseline_ignores_players_who_have_left_the_league():
     baseline = xpts.ownership_baseline(elements)
 
     assert baseline[xpts._band_for(65)] == 5.0
+
+
+# ------------------------------------- the shrink that switched itself off
+
+
+def _prior_element(element_id, element_type, minutes, xg90=0.0, xa90=0.0):
+    return {
+        "id": element_id,
+        "web_name": f"P{element_id}",
+        "element_type": element_type,
+        "team": 1,
+        "now_cost": 60,
+        "minutes": minutes,
+        "expected_goals_per_90": xg90,
+        "expected_assists_per_90": xa90,
+        "status": "a",
+    }
+
+
+def test_priors_exist_before_anybody_has_a_reliable_season():
+    """The bug, stated as a test.
+
+    Priors were built only from players with 900+ minutes. FPL resets every
+    total at the rollover, so from the first kick until somebody has played ten
+    full matches there is nobody in the league who clears that — and an empty
+    prior set is read by `project_player` as "nothing to shrink".
+
+    That is the exact window in which every rate on record is a cameo. A
+    midfielder who scored once in 63 minutes carried 2.01 expected goals per 90
+    unshrunk and outprojected every premium in the game.
+    """
+    # A GW1-shaped league: everyone has played once, nobody is near 900.
+    elements = [
+        _prior_element(i, 3, minutes=70, xg90=0.10 + i * 0.01) for i in range(1, 12)
+    ]
+
+    priors = xpts.position_rate_priors(elements)
+
+    assert priors, "no prior means no shrinking, in the window that needs it most"
+    assert priors["MID"]["expected_goals_per_90"] > 0
+
+
+def test_a_cameo_rate_is_pulled_most_of_the_way_to_the_prior():
+    """63 minutes is not evidence of a 2.01 xG per 90 striker rate."""
+    shrunk = xpts.shrink_rate(2.01, minutes=63, prior=0.10)
+
+    assert shrunk < 0.35, "a single cameo still dominated the projection"
+    assert shrunk > 0.10, "and it is not thrown away either"
+
+
+def test_a_full_season_of_evidence_is_left_nearly_alone():
+    """The shrink must not flatten players who have actually proved something."""
+    shrunk = xpts.shrink_rate(0.80, minutes=2900, prior=0.10)
+
+    assert shrunk > 0.6
+
+
+def test_a_better_evidenced_prior_is_not_replaced_by_a_worse_one():
+    """The ladder descends only to fill what the floor above could not. A median
+    over 900-minute players is worth more than one over 90-minute players, and
+    must not be overwritten by it once found."""
+    seasoned = [_prior_element(i, 4, minutes=2000, xg90=0.60) for i in range(1, 12)]
+    cameos = [_prior_element(100 + i, 4, minutes=90, xg90=0.05) for i in range(1, 12)]
+
+    priors = xpts.position_rate_priors(seasoned + cameos)
+
+    assert priors["FWD"]["expected_goals_per_90"] == 0.60
