@@ -237,11 +237,13 @@ def test_a_season_younger_than_the_training_floor_falls_back(monkeypatch):
     extrapolating from the nearest thing they know.
     """
     assert ml_scorer._season_is_younger_than_training(_teams(1), [])
-    assert ml_scorer._season_is_younger_than_training(_teams(4), [])
+    assert ml_scorer._season_is_younger_than_training(_teams(3), [])
 
 
 def test_once_the_season_is_old_enough_the_model_is_used_again():
-    assert not ml_scorer._season_is_younger_than_training(_teams(5), [])
+    """4, not 5: the panel keeps rows from gameweek 5 onward and team games
+    counts prior rows, so 4 is the smallest the model ever fitted against."""
+    assert not ml_scorer._season_is_younger_than_training(_teams(4), [])
     assert not ml_scorer._season_is_younger_than_training(_teams(20), [])
 
 

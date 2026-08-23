@@ -141,16 +141,22 @@ def _season_is_younger_than_training(
 ) -> bool:
     """Whether the league has played fewer rounds than the model was trained on.
 
+    The threshold is :func:`min_team_games`, which already reasons this out and
+    lands on 4 rather than ``MIN_GAMEWEEK``: the panel keeps rows from gameweek
+    5 onward and ``team_games_played`` counts *prior* rows, so 4 is the smallest
+    value the model ever fitted against.
+
+    ``describe`` has reported this state for a while. Nothing acted on it — the
+    picker said the engine was inactive while ``project_all`` went on serving
+    its numbers.
+
     Measured from matches actually played rather than the gameweek number, so a
     season that opens with postponements is judged by the football rather than
     by the calendar.
     """
-    from ml import config as ml_config
-
-    played = xpts.team_games_played(teams, events)
     # 0 is the rollover, before anybody has kicked a ball — the youngest a
     # season gets, and squarely inside the window this guards.
-    return played < int(ml_config.MIN_GAMEWEEK)
+    return xpts.team_games_played(teams, events) < min_team_games()
 
 
 def project_all(

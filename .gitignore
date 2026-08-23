@@ -17,3 +17,6 @@ ml/artifacts/
 # flutter_web/
 # Runtime log from scripts/refresh-research.sh
 scripts/research.log
+
+# Runtime log from scripts/refresh-model.sh
+scripts/model.log

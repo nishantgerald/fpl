@@ -56,42 +56,78 @@ def test_too_few_seasons_holds_nothing_out_rather_than_pretending():
 # --------------------------------------------------------------- the gate
 
 
-class _Frame(dict):
-    """Enough of a DataFrame for the gate: copy() and item assignment."""
+def test_the_incumbent_is_judged_on_the_same_exam(monkeypatch):
+    """The subtlety the first cut of this got wrong.
 
-    def copy(self):
-        return _Frame(self)
-
-
-def test_a_worse_candidate_does_not_replace_the_deployed_model(monkeypatch):
-    """The property that matters. A pipeline that always saves will eventually
-    deploy a regression and tell nobody."""
-    monkeypatch.setattr(train.models, "load", lambda: ("incumbent", {}))
-    monkeypatch.setattr(train.models, "predict", lambda m, f: [0.0])
+    The artifact was refit on train + validation before being frozen, so
+    scoring it on validation now scores it on rows it was fitted to. It wins
+    that by construction, and a gate built on it keeps the first model ever
+    trained for ever. Its metadata carries the score its *train-only* fit
+    earned, which is what the candidate's number is.
+    """
     monkeypatch.setattr(
-        train.metrics, "evaluate", lambda f, c: {train.SELECTION_METRIC: 0.80}
+        train.models,
+        "load",
+        lambda: (
+            "model",
+            {
+                "model": "hgb_poisson",
+                "valid_seasons": list(config.VALID_SEASONS),
+                "validation_scores": {"hgb_poisson": {train.SELECTION_METRIC: 0.76}},
+            },
+        ),
     )
 
-    assert train.incumbent_validation_score(_Frame()) == 0.80
+    score, why = train.incumbent_validation_score()
+
+    assert score == pytest.approx(0.76)
+    assert "hgb_poisson" in why
+
+
+def test_a_moved_split_is_not_a_comparison(monkeypatch):
+    """Seasons roll forward. Once they do, the recorded number describes a
+    different set of gameweeks — two models, two exams. Comparing across that
+    silently would gate on a regime change."""
+    monkeypatch.setattr(
+        train.models,
+        "load",
+        lambda: (
+            "model",
+            {
+                "model": "hgb_poisson",
+                "valid_seasons": ["1999-00"],
+                "validation_scores": {"hgb_poisson": {train.SELECTION_METRIC: 0.99}},
+            },
+        ),
+    )
+
+    score, why = train.incumbent_validation_score()
+
+    assert score is None
+    assert "split moved" in why
 
 
 def test_no_artifact_means_nothing_to_beat(monkeypatch):
     monkeypatch.setattr(train.models, "load", lambda: (None, None))
 
-    assert train.incumbent_validation_score(_Frame()) is None
+    score, why = train.incumbent_validation_score()
+
+    assert score is None
+    assert "no deployed artifact" in why
 
 
-def test_an_unscoreable_artifact_is_treated_as_absent(monkeypatch):
-    """A feature list that no longer matches is a deliberate reset, not a
-    regression, and must not block the first run after one."""
+def test_an_artifact_with_no_recorded_score_is_treated_as_absent(monkeypatch):
+    """A model frozen before the gate existed has no comparable number, and must
+    not block the first run after it."""
+    monkeypatch.setattr(
+        train.models,
+        "load",
+        lambda: ("model", {"model": "hgb", "valid_seasons": list(config.VALID_SEASONS)}),
+    )
 
-    def _boom(*a, **k):
-        raise ValueError("feature mismatch")
+    score, _ = train.incumbent_validation_score()
 
-    monkeypatch.setattr(train.models, "load", lambda: ("incumbent", {}))
-    monkeypatch.setattr(train.models, "predict", _boom)
-
-    assert train.incumbent_validation_score(_Frame()) is None
+    assert score is None
 
 
 def test_the_margin_is_not_zero():

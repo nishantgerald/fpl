@@ -37,28 +37,41 @@ SELECTION_METRIC = "spearman_gw"
 GATE_MARGIN = 0.002
 
 
-def incumbent_validation_score(valid) -> float | None:
-    """The deployed artifact's score on *this* validation split, or None.
+def incumbent_validation_score() -> tuple[float | None, str]:
+    """The deployed model's score on the *same exam* the candidate just sat.
 
-    Scored here rather than read out of its own metadata. The splits roll
-    forward as seasons are added, so the incumbent's recorded number describes a
-    different set of gameweeks and comparing against it would be comparing two
-    models on two exams.
+    Read from its metadata rather than recomputed, and this is the whole
+    subtlety. The artifact was refit on train + validation before it was frozen
+    — step 5 of the protocol — so scoring it on validation now scores it on rows
+    it was fitted to. It wins that comparison by construction, and a gate built
+    on it would keep the first model ever trained for ever.
 
-    None means there is nothing to compare against — no artifact, or one whose
-    feature list no longer matches, which :func:`ml.models.load` refuses. Both
-    are deliberate resets rather than regressions.
+    Its metadata carries the score its *train-only* fit earned on validation,
+    which is exactly what the candidate's number is. Like for like.
+
+    Comparable only while the split is unchanged. Seasons roll forward, and once
+    they do the recorded number describes a different set of gameweeks —
+    two models, two exams, no comparison. That is reported as "no incumbent"
+    and the candidate ships, because the alternative is a gate that silently
+    compares across regimes.
     """
-    model, _ = models.load()
-    if model is None:
-        return None
-    try:
-        scored = valid.copy()
-        scored["pred_incumbent"] = models.predict(model, scored)
-        return _finite(metrics.evaluate(scored, "pred_incumbent")[SELECTION_METRIC])
-    except Exception as error:  # pragma: no cover - artifact shapes vary
-        print(f"[gate] could not score the incumbent ({error}); treating as absent")
-        return None
+    _, metadata = models.load()
+    if not metadata:
+        return None, "no deployed artifact"
+
+    recorded_split = tuple(metadata.get("valid_seasons") or ())
+    if recorded_split != tuple(config.VALID_SEASONS):
+        return None, (
+            f"validation split moved ({recorded_split or 'unknown'} -> "
+            f"{tuple(config.VALID_SEASONS)}), nothing comparable"
+        )
+
+    winner = metadata.get("model")
+    scores = (metadata.get("validation_scores") or {}).get(winner) or {}
+    if SELECTION_METRIC not in scores:
+        return None, "deployed artifact recorded no comparable validation score"
+
+    return _finite(scores[SELECTION_METRIC]), f"deployed {winner}"
 
 
 def load_frame(refresh: bool = False):
@@ -175,12 +188,13 @@ def run(
     # deploy a worse model and tell nobody. The candidate has to beat what is
     # already deployed, on the same validation split, by more than the noise
     # between two refits.
-    incumbent = incumbent_validation_score(valid)
+    incumbent, why = incumbent_validation_score()
     candidate = _finite(validation_scores[winner][SELECTION_METRIC])
     metadata["gate"] = {
         "metric": SELECTION_METRIC,
         "candidate": candidate,
         "incumbent": incumbent,
+        "incumbent_basis": why,
         "margin": GATE_MARGIN,
     }
 
@@ -189,7 +203,7 @@ def run(
     if shipped:
         models.save(final, metadata)
         if incumbent is None:
-            print(f"[save] {config.artifact_path()} (nothing to compare against)")
+            print(f"[save] {config.artifact_path()} ({why})")
         else:
             print(
                 f"[save] {config.artifact_path()} "
