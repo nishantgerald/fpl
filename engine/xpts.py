@@ -390,6 +390,128 @@ def position_rate_priors(
     return priors
 
 
+_PLAYER_PRIORS: dict | None = None
+
+
+def player_rate_priors() -> dict[str, dict[str, float]]:
+    """Last season's per-90 rates, keyed by FPL's cross-season ``code``.
+
+    The best prior for a player who has played is what he actually did. A
+    positional median says a £15.5m striker and a £4.5m bench filler will score
+    alike; his own 2736 minutes say otherwise, and early in a season the prior
+    is most of the projection.
+
+    Absent for promoted clubs and overseas signings, who have no Premier League
+    history — they fall back to the price band, because a player without a past
+    should be judged by what the market makes of him rather than handed someone
+    else's numbers.
+
+    Built by ``scripts/build_player_priors.py``. Missing file is not an error:
+    the chain below it still works, which is what every season before this one
+    ran on.
+    """
+    global _PLAYER_PRIORS
+    if _PLAYER_PRIORS is None:
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).with_name("data") / "player_priors.json"
+        try:
+            _PLAYER_PRIORS = json.loads(path.read_text()).get("players") or {}
+        except Exception:
+            _PLAYER_PRIORS = {}
+    return _PLAYER_PRIORS
+
+
+def price_band_rate_priors(
+    elements: Sequence[Mapping],
+) -> dict[tuple[str, tuple[int, int]], dict[str, float]]:
+    """The same medians, split by what FPL charges for the player.
+
+    A flat positional median is the wrong thing to regress a premium toward.
+    Every forward in the game shrinks to the same number, so the £15.5m striker
+    and the £4.5m bench filler are told they will score alike — and early in a
+    season, when the shrink is doing nearly all the work, that is most of the
+    projection. It put Haaland at 2.9 points a gameweek.
+
+    Price is the market's estimate of a player's role and quality, published
+    before a ball is kicked and updated all season, and it separates output
+    sharply: at GW1 the median expected goals per 90 ran 0.07, 0.13, 0.85 across
+    the three forward price bands. Regressing toward the band is regressing
+    toward players the market considers comparable, which is what a prior is
+    supposed to mean.
+
+    Bands are :data:`OWNERSHIP_BANDS`, already used to judge ownership for the
+    same reason, so a player sits in one band throughout this module.
+    """
+    keys = (
+        "expected_goals_per_90",
+        "expected_assists_per_90",
+        "expected_goals_conceded_per_90",
+        "saves_per_90",
+        "defensive_contribution_per_90",
+    )
+
+    priors: dict[tuple[str, tuple[int, int]], dict[str, float]] = {}
+    for floor in PRIOR_MINUTE_LADDER:
+        buckets: dict[tuple[str, tuple[int, int]], dict[str, list[float]]] = {}
+        for element in elements:
+            if _f(element.get("minutes")) < floor:
+                continue
+            if element.get("status") == "u":
+                continue
+            cell = (position_of(element), _band_for(int(element.get("now_cost") or 0)))
+            for key in keys:
+                value = _f(element.get(key))
+                if value > 0:
+                    buckets.setdefault(cell, {}).setdefault(key, []).append(value)
+
+        for cell, by_key in buckets.items():
+            for key, values in by_key.items():
+                if key in priors.get(cell, {}):
+                    continue
+                # A band is a slice of a position, so it is always the smaller
+                # pool. It has to earn its place at every floor, or a median of
+                # two premiums becomes the prior for all of them.
+                if len(values) < MIN_PRIOR_SAMPLE:
+                    continue
+                values.sort()
+                priors.setdefault(cell, {})[key] = values[len(values) // 2]
+
+    return priors
+
+
+def prior_rate(
+    position: str,
+    now_cost: int,
+    key: str,
+    by_band: Mapping | None,
+    by_position: Mapping | None,
+    code: int | None = None,
+) -> float:
+    """What this rate should be regressed toward, most specific first.
+
+    The player's own record, then players the market prices like him, then his
+    position. Each step down is a step away from him and toward a crowd, taken
+    only because the step above had nothing to say: a band with too few players
+    behind it is not more specific than the position, only noisier.
+    """
+    if code is not None:
+        own = player_rate_priors().get(str(int(code)))
+        if own and key in own:
+            return float(own[key])
+    if by_band:
+        cell = (position, _band_for(now_cost))
+        value = (by_band.get(cell) or {}).get(key)
+        if value is not None:
+            return float(value)
+    if by_position:
+        value = (by_position.get(position) or {}).get(key)
+        if value is not None:
+            return float(value)
+    return 0.0
+
+
 def shrink_rate(rate: float, minutes: float, prior: float) -> float:
     """Regress a per-90 rate toward ``prior`` when few minutes back it.
 
@@ -598,6 +720,7 @@ def project_player(
     team_games: int,
     rate_priors: Mapping[str, Mapping[str, float]] | None = None,
     ownership: Mapping[tuple[int, int], float] | None = None,
+    band_priors: Mapping | None = None,
 ) -> dict:
     """Project one player over ``gameweeks``.
 
@@ -638,17 +761,23 @@ def project_player(
     # with a cameo on record carries rates that are arithmetic, not evidence.
     # Regress them toward the positional median in proportion to the minutes
     # behind them.
-    if rate_priors:
+    if rate_priors or band_priors:
         played = _f(player.get("minutes"))
-        priors = rate_priors.get(position, {})
-        xg90 = shrink_rate(xg90, played, priors.get("expected_goals_per_90", 0.0))
-        xa90 = shrink_rate(xa90, played, priors.get("expected_assists_per_90", 0.0))
+        cost = int(player.get("now_cost") or 0)
+        code = player.get("code")
+
+        def _prior(key: str, fallback: float = 0.0) -> float:
+            value = prior_rate(position, cost, key, band_priors, rate_priors, code)
+            return value if value > 0 else fallback
+
+        xg90 = shrink_rate(xg90, played, _prior("expected_goals_per_90"))
+        xa90 = shrink_rate(xa90, played, _prior("expected_assists_per_90"))
         xgc90 = shrink_rate(
-            xgc90, played, priors.get("expected_goals_conceded_per_90", xgc90)
+            xgc90, played, _prior("expected_goals_conceded_per_90", xgc90)
         )
-        saves90 = shrink_rate(saves90, played, priors.get("saves_per_90", 0.0))
+        saves90 = shrink_rate(saves90, played, _prior("saves_per_90"))
         dc90 = shrink_rate(
-            dc90, played, priors.get("defensive_contribution_per_90", 0.0)
+            dc90, played, _prior("defensive_contribution_per_90")
         )
 
     games_played = effective_team_games(team_games)
@@ -838,11 +967,19 @@ def project_all(
     team_index = build_team_index(teams)
     games = team_games_played(teams, events)
     priors = position_rate_priors(elements)
+    band_priors = price_band_rate_priors(elements)
     ownership = ownership_baseline(elements)
 
     return {
         int(p["id"]): project_player(
-            p, gameweeks, fixture_index, team_index, games, priors, ownership
+            p,
+            gameweeks,
+            fixture_index,
+            team_index,
+            games,
+            priors,
+            ownership,
+            band_priors,
         )
         for p in elements
         if POSITIONS.get(int(p.get("element_type", 0))) in ("GKP", "DEF", "MID", "FWD")

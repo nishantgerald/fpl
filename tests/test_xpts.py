@@ -609,3 +609,97 @@ def test_a_better_evidenced_prior_is_not_replaced_by_a_worse_one():
     priors = xpts.position_rate_priors(seasoned + cameos)
 
     assert priors["FWD"]["expected_goals_per_90"] == 0.60
+
+
+# ------------------------------- what a rate should be regressed toward
+
+
+def test_a_players_own_record_beats_any_median(monkeypatch):
+    """The point of the whole chain.
+
+    A positional median tells a £15.5m striker and a £4.5m bench filler they
+    will score alike, and early in a season the prior is most of the
+    projection — it put Haaland at 2.9 points a gameweek. His own 2736 minutes
+    say 0.72 expected goals per 90, and that is not a guess.
+    """
+    monkeypatch.setattr(
+        xpts, "_PLAYER_PRIORS", {"7": {"expected_goals_per_90": 0.72}}
+    )
+
+    got = xpts.prior_rate(
+        "FWD",
+        155,
+        "expected_goals_per_90",
+        by_band={("FWD", (0, 1000)): {"expected_goals_per_90": 0.22}},
+        by_position={"FWD": {"expected_goals_per_90": 0.10}},
+        code=7,
+    )
+
+    assert got == 0.72
+
+
+def test_a_player_with_no_league_history_falls_back_to_his_price(monkeypatch):
+    """Promoted clubs and overseas signings have no Premier League record. They
+    should be judged by what the market makes of them, not handed the numbers
+    of whoever happens to share their position."""
+    monkeypatch.setattr(xpts, "_PLAYER_PRIORS", {})
+    band = xpts._band_for(155)
+
+    got = xpts.prior_rate(
+        "FWD",
+        155,
+        "expected_goals_per_90",
+        by_band={("FWD", band): {"expected_goals_per_90": 0.55}},
+        by_position={"FWD": {"expected_goals_per_90": 0.10}},
+        code=999999,
+    )
+
+    assert got == 0.55
+
+
+def test_with_neither_a_record_nor_a_band_the_position_still_answers(monkeypatch):
+    monkeypatch.setattr(xpts, "_PLAYER_PRIORS", {})
+
+    got = xpts.prior_rate(
+        "MID",
+        60,
+        "expected_goals_per_90",
+        by_band={},
+        by_position={"MID": {"expected_goals_per_90": 0.10}},
+        code=1,
+    )
+
+    assert got == 0.10
+
+
+def test_this_season_takes_over_from_last_as_minutes_accrue():
+    """The answer to "does it learn from recent gameweeks".
+
+    Last season is the starting point, not the verdict. `shrink_rate` weights
+    the observed rate by the minutes behind it, so one cameo barely moves the
+    number and a season of evidence all but replaces it.
+    """
+    last_season, this_season = 0.20, 1.00
+
+    after_one_game = xpts.shrink_rate(this_season, 90, last_season)
+    after_ten = xpts.shrink_rate(this_season, 900, last_season)
+    after_a_season = xpts.shrink_rate(this_season, 2700, last_season)
+
+    assert after_one_game < 0.35, "one game should barely move it"
+    assert after_ten > after_one_game
+    assert after_a_season > 0.7, "a season of evidence should have taken over"
+
+
+def test_a_missing_artifact_is_not_an_error(monkeypatch):
+    """Every season before this one ran without it, and the chain below it
+    still works. A deployment without the file must degrade, not fail."""
+    import pathlib
+
+    monkeypatch.setattr(xpts, "_PLAYER_PRIORS", None)
+    monkeypatch.setattr(
+        pathlib.Path,
+        "read_text",
+        lambda self, *a, **k: (_ for _ in ()).throw(FileNotFoundError(self)),
+    )
+
+    assert xpts.player_rate_priors() == {}
