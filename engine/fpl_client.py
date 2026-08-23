@@ -449,6 +449,25 @@ def history(entry_id: int) -> dict | None:
     return value
 
 
+def element_summary(player_id: int) -> dict | None:
+    """One player's per-gameweek record: ``history``, ``history_past``, fixtures.
+
+    A per-player call, so it is cached like the rest. The bootstrap carries a
+    player's season totals and his score for the current gameweek and nothing in
+    between — this is the only route to what he did three weeks ago.
+    """
+    try:
+        value, fetched_at, stale = _cache.get(
+            f"element-summary:{player_id}",
+            TTL_HISTORY,
+            lambda: _get_json(f"/element-summary/{player_id}/"),
+        )
+    except UpstreamUnavailable:
+        return None
+    _record(fetched_at, stale)
+    return value
+
+
 # ---------------------------------------------------------------- derived
 
 

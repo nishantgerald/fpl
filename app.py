@@ -45,6 +45,7 @@ from flask.json.provider import DefaultJSONProvider
 from flask_cors import CORS
 
 from engine import captain as captain_engine
+from engine import history as history_mod
 from engine import (
     accounts,
     chips,
@@ -733,6 +734,57 @@ def players_data():
 
     payloads.sort(key=lambda p: (-p["xpts_horizon"], p["id"]))
     return jsonify({"data": payloads, "meta": meta})
+
+
+@app.route("/api/player/<int:player_id>/history")
+def player_history(player_id):
+    """What a player actually scored recently, and where each point came from.
+
+    The mirror of the projection route. That one answers "what do you expect";
+    this answers "what happened", which is the question a manager asks first and
+    the app could not answer at all — the bootstrap carries a season total and a
+    current-gameweek score and nothing in between.
+
+    The attribution is derived from FPL's published scoring rules and checked
+    against FPL's own total. Where the two disagree the gap is reported rather
+    than absorbed.
+    """
+    data = fpl_client.bootstrap()
+    element = next(
+        (e for e in data.get("elements", []) if int(e["id"]) == player_id), None
+    )
+    if element is None:
+        return jsonify(
+            {"code": "player_not_found", "error": "No such player."}
+        ), 404
+
+    summary = fpl_client.element_summary(player_id)
+    if summary is None:
+        return jsonify(
+            {
+                "code": "upstream_unavailable",
+                "error": "Could not read that player's history.",
+            }
+        ), 503
+
+    teams = {int(t["id"]): t.get("short_name", "UNK") for t in data.get("teams", [])}
+    limit = _int_arg("last", 5, 1, 38)
+    rows = history_mod.recent(
+        summary.get("history") or [], rules.position_of(element), limit
+    )
+    for row in rows:
+        row["opponent"] = teams.get(row.pop("opponent"), "UNK")
+
+    return jsonify(
+        {
+            "player_id": player_id,
+            "web_name": element.get("web_name", ""),
+            "position": rules.position_of(element),
+            "games": rows,
+            "total_points": sum(r["total_points"] for r in rows),
+            "meta": fpl_client.meta(),
+        }
+    )
 
 
 @app.route("/api/player/<int:player_id>/projection")
